@@ -19,17 +19,6 @@ import struct
 import threading
 
 import assemblyai as aai
-from assemblyai.streaming.v3 import (
-    BeginEvent,
-    StreamingClient,
-    StreamingClientOptions,
-    StreamingError,
-    StreamingEvents,
-    StreamingParameters,
-    TerminationEvent,
-    TurnEvent,
-)
-from typing import Type
 
 def parse_args():
     """Parse command line arguments."""
@@ -215,7 +204,7 @@ class TerminalUI:
 class VoiceController:
     def __init__(self, ui: TerminalUI):
         self.ui = ui
-        self.client = None
+        self.transcriber = None
         self.is_listening = False
         self.transcript_buffer = ""
 
@@ -223,19 +212,29 @@ class VoiceController:
         api_key = os.getenv("ASSEMBLYAI_API_KEY", "f5115c8df6de446999a096a3edee97cb")
         aai.settings.api_key = api_key
 
-    def on_begin(self, client: Type[StreamingClient], event: BeginEvent):
-        print(f"\nVoice session started: {event.id}")
+    def on_open(self, session_opened: aai.RealtimeSessionOpened):
+        print(f"\nVoice session opened: {session_opened.session_id}")
 
-    def on_turn(self, client: Type[StreamingClient], event: TurnEvent):
-        if event.transcript:
-            self.transcript_buffer += event.transcript + " "
-            self.ui.update_transcript(self.transcript_buffer.strip())
+    def on_data(self, transcript: aai.RealtimeTranscript):
+        if isinstance(transcript, aai.RealtimePartialTranscript):
+            # Show live partial (word-by-word) - replace previous partial
+            display_text = ""
+            if self.transcript_buffer:  # Previous final transcripts
+                display_text = self.transcript_buffer.strip() + " "
+            display_text += transcript.text  # Add current partial
+            self.ui.update_transcript(display_text)
 
-    def on_terminated(self, client: Type[StreamingClient], event: TerminationEvent):
-        print(f"\nVoice session ended: {event.audio_duration_seconds}s processed")
+        elif isinstance(transcript, aai.RealtimeFinalTranscript):
+            # Commit final transcript to buffer
+            if transcript.text:
+                self.transcript_buffer += transcript.text + " "
+                self.ui.update_transcript(self.transcript_buffer.strip())
 
-    def on_error(self, client: Type[StreamingClient], error: StreamingError):
+    def on_error(self, error: aai.RealtimeError):
         print(f"\nVoice error: {error}")
+
+    def on_close(self):
+        print(f"\nVoice session closed")
 
     def start_listening(self):
         """Start voice transcription."""
@@ -247,31 +246,23 @@ class VoiceController:
         self.ui.set_listening(True)
 
         try:
-            self.client = StreamingClient(
-                StreamingClientOptions(
-                    api_key=aai.settings.api_key,
-                    api_host="streaming.assemblyai.com",
-                )
+            self.transcriber = aai.RealtimeTranscriber(
+                sample_rate=16000,
+                on_data=self.on_data,
+                on_error=self.on_error,
+                on_open=self.on_open,
+                on_close=self.on_close,
+                # Keep partials enabled for real-time word-by-word display
+                disable_partial_transcripts=False
             )
 
-            self.client.on(StreamingEvents.Begin, self.on_begin)
-            self.client.on(StreamingEvents.Turn, self.on_turn)
-            self.client.on(StreamingEvents.Termination, self.on_terminated)
-            self.client.on(StreamingEvents.Error, self.on_error)
-
-            self.client.connect(
-                StreamingParameters(
-                    sample_rate=16000,
-                    format_turns=True
-                )
-            )
-
+            self.transcriber.connect()
             self.is_listening = True
 
             # Start streaming in background thread
             def stream_audio():
                 try:
-                    self.client.stream(aai.extras.MicrophoneStream(sample_rate=16000))
+                    self.transcriber.stream(aai.extras.MicrophoneStream(sample_rate=16000))
                 except Exception as e:
                     print(f"\nStreaming error: {e}")
                     self.is_listening = False
@@ -284,19 +275,19 @@ class VoiceController:
             self.ui.set_listening(False)
 
     def stop_listening(self):
-        """Stop voice transcription and return transcript."""
+        """Stop voice transcription and return final transcript."""
         if not self.is_listening:
             return ""
 
         self.ui.set_listening(False)
         self.is_listening = False
 
-        if self.client:
+        if self.transcriber:
             try:
-                self.client.disconnect(terminate=True)
+                self.transcriber.close()
             except Exception:
                 pass
-            self.client = None
+            self.transcriber = None
 
         return self.transcript_buffer.strip()
 
