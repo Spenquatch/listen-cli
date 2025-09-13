@@ -12,6 +12,7 @@ sounddevice = ">=0.4.6"
 numpy = ">=1.26.0"
 rapidfuzz = ">=3.6.1"
 rich = ">=13.7.0"
+assemblyai = {extras = ["extras"], version = "^0.43.1"}
 
 [build-system]
 requires = ["poetry-core"]

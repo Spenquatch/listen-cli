@@ -90,7 +90,7 @@ class AssemblyAIStreaming(STTAdapter):
         self.url = url or "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
 
     async def stream(self, pcm_chunks: AsyncIterator[bytes], *, metadata: Dict[str, Any]) -> AsyncIterator[STTEvent]:
-        ws = await self._websockets.connect(self.url, extra_headers={"Authorization": self.api_key})
+        ws = await self._websockets.connect(self.url, additional_headers={"Authorization": self.api_key})
         try:
             async def _keepalive():
                 try:
