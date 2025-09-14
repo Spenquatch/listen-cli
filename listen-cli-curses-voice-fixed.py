@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Curses-based terminal UI with footer, infinite scroll, and voice input.
-Complete implementation with AssemblyAI integration.
+Curses-based terminal UI with FIXED voice toggle and better UI feedback.
+Voice control properly toggles on/off with clear status indicators.
 """
 
 import os
@@ -16,6 +16,7 @@ import curses
 import queue
 import threading
 import re
+import time
 from typing import Optional, Tuple
 
 import pyte
@@ -98,7 +99,7 @@ class PTYChild:
 
 
 class ThreadSafeVoiceController:
-    """Voice controller that uses queue for thread-safe UI updates."""
+    """Voice controller with improved state management and UI feedback."""
 
     def __init__(self, ui_queue: queue.Queue, pipe_w: int):
         self.ui_queue = ui_queue
@@ -107,6 +108,7 @@ class ThreadSafeVoiceController:
         self.is_listening = False
         self.transcript_buffer = []
         self.stream_thread = None
+        self.has_content = False  # Track if we have any transcript
 
         # Configure AssemblyAI
         api_key = os.getenv("ASSEMBLYAI_API_KEY", "f5115c8df6de446999a096a3edee97cb")
@@ -114,24 +116,31 @@ class ThreadSafeVoiceController:
 
     def on_open(self, session_opened: aai.RealtimeSessionOpened):
         """Session opened callback."""
-        self.ui_queue.put(('status', '🎤 Voice: Listening...'))
-        os.write(self.pipe_w, b'!')
+        # Don't change status here - it's already set
+        pass
 
     def on_data(self, transcript: aai.RealtimeTranscript):
         """Transcript data callback."""
+        # Ignore any late data after listening has been stopped
+        if not self.is_listening:
+            return
         if isinstance(transcript, aai.RealtimeFinalTranscript):
             text = transcript.text.strip()
             if text:
                 self.transcript_buffer.append(text + " ")
-                # Update status with partial transcript
-                preview = "".join(self.transcript_buffer)[-30:]
-                self.ui_queue.put(('status', f'🎤 Voice: {preview}...'))
+                self.has_content = True
+                # Show real-time transcript preview (last few words)
+                preview_full = "".join(self.transcript_buffer)
+                words = preview_full.strip().split()
+                last_words = " ".join(words[-6:]) if words else ""
+                self.ui_queue.put(('voice_status', True, last_words))
                 os.write(self.pipe_w, b'!')
 
     def on_error(self, error: aai.RealtimeError):
         """Error callback."""
         self.ui_queue.put(('status', f'❌ Voice error: {error}'))
         os.write(self.pipe_w, b'!')
+        self.is_listening = False
 
     def on_close(self):
         """Session closed callback."""
@@ -140,11 +149,16 @@ class ThreadSafeVoiceController:
     def start_listening(self):
         """Start voice transcription."""
         if self.is_listening:
-            return
+            return False  # Already listening
 
         # Clear buffer for new session
         self.transcript_buffer = []
+        self.has_content = False
         self.is_listening = True
+
+        # Update UI to show we're listening (no initial preview text)
+        self.ui_queue.put(('voice_status', True, ""))
+        os.write(self.pipe_w, b'!')
 
         try:
             self.transcriber = aai.RealtimeTranscriber(
@@ -169,18 +183,24 @@ class ThreadSafeVoiceController:
 
             self.stream_thread = threading.Thread(target=stream_audio, daemon=True)
             self.stream_thread.start()
+            return True
 
         except Exception as e:
             self.ui_queue.put(('status', f'❌ Error starting voice: {e}'))
             os.write(self.pipe_w, b'!')
             self.is_listening = False
+            return False
 
     def stop_listening(self):
         """Stop voice transcription and queue the transcript."""
         if not self.is_listening:
-            return
+            return None  # Not listening
 
         self.is_listening = False
+
+        # Update UI to show we're stopping
+        self.ui_queue.put(('voice_status', False, "Processing..."))
+        os.write(self.pipe_w, b'!')
 
         # Close transcriber
         if self.transcriber:
@@ -190,39 +210,45 @@ class ThreadSafeVoiceController:
                 pass
             self.transcriber = None
 
-        # Queue the accumulated text for pasting
+        # Get the accumulated text
+        full_text = None
         if self.transcript_buffer:
             full_text = "".join(self.transcript_buffer).strip()
-
             if full_text:
                 # Clean up text for pasting
                 full_text = full_text.replace('\n', ' ').replace('\r', ' ')
                 full_text = re.sub(r'\s+', ' ', full_text).strip()
 
-                # Queue paste event
-                self.ui_queue.put(('paste', full_text))
-                self.ui_queue.put(('status', '✓ Voice: Pasted'))
-                os.write(self.pipe_w, b'!')
-            else:
-                self.ui_queue.put(('status', 'Voice: No text'))
-                os.write(self.pipe_w, b'!')
-        else:
-            self.ui_queue.put(('status', 'Voice: No text'))
-            os.write(self.pipe_w, b'!')
-
         # Clear buffer
         self.transcript_buffer = []
+        self.has_content = False
+
+        # Queue the paste event if we have text
+        if full_text:
+            self.ui_queue.put(('paste', full_text))
+            # Show a transient finished message; UI will clear it after a delay
+            self.ui_queue.put(('voice_status', False, "Transcribing Finished"))
+            os.write(self.pipe_w, b'!')
+            return full_text
+        else:
+            # Show a transient finished message even if nothing captured
+            self.ui_queue.put(('voice_status', False, "Transcribing Finished"))
+            self.ui_queue.put(('status', 'No voice input captured'))
+            os.write(self.pipe_w, b'!')
+            return None
 
     def toggle(self):
-        """Toggle voice on/off."""
+        """Toggle voice on/off and return new state."""
         if self.is_listening:
-            self.stop_listening()
+            text = self.stop_listening()
+            return (False, text)  # (is_listening, captured_text)
         else:
-            self.start_listening()
+            success = self.start_listening()
+            return (success, None)  # (is_listening, None)
 
 
 class CursesUI:
-    """Main curses UI handler with voice integration."""
+    """Main curses UI handler with improved voice state tracking."""
 
     def __init__(self, child: PTYChild):
         self.child = child
@@ -235,6 +261,12 @@ class CursesUI:
         self.voice_queue = queue.Queue()
         self.voice_pipe_r, self.voice_pipe_w = os.pipe()
         self.voice_controller = None
+
+        # Voice state tracking
+        self.voice_active = False
+        self.voice_text_preview = ""
+        self.last_status = "Ready"
+        self.voice_finished_until = 0.0
 
         # Make voice pipe non-blocking
         flags = fcntl.fcntl(self.voice_pipe_r, fcntl.F_GETFL)
@@ -290,18 +322,33 @@ class CursesUI:
 
         return attr
 
-    def draw_footer(self, status: str = ""):
-        """Draw the footer with status information."""
+    def draw_footer(self, status: str = None):
+        """Draw the footer with status information and voice state."""
         if not self.stdscr:
             return
 
         max_y, max_x = self.stdscr.getmaxyx()
         footer_y = max_y - 1
 
-        # Build footer text
-        if not status:
-            status = "Ready"
-        footer = f" ^G: Voice | q: Quit | ↑↓: Scroll | {status} "
+        # Update last status if provided
+        if status is not None:
+            self.last_status = status
+
+        # Build footer text with voice indicator
+        now = time.time()
+        if self.voice_active:
+            if self.voice_text_preview:
+                voice_indicator = f"Listening: {self.voice_text_preview}"
+            else:
+                voice_indicator = "Listening..."
+        else:
+            # If we recently finished, show transient message; otherwise, nothing
+            if now < self.voice_finished_until:
+                voice_indicator = "Transcribing Finished"
+            else:
+                voice_indicator = ""
+
+        footer = f" {voice_indicator} | q: Quit | ↑↓: Scroll | {self.last_status} "
         footer = footer[:max_x].ljust(max_x)
 
         try:
@@ -475,17 +522,43 @@ class CursesUI:
                     try:
                         os.read(self.voice_pipe_r, 1024)  # Clear pipe
                         while not self.voice_queue.empty():
-                            event_type, data = self.voice_queue.get()
+                            event_type, *args = self.voice_queue.get()
+
                             if event_type == 'paste':
                                 # Send transcript to child with bracketed paste
-                                self.child.send(b'\x1b[200~')  # Start
-                                self.child.send(data.encode('utf-8'))
-                                self.child.send(b'\x1b[201~')  # End
-                                # Send CR to submit the message
-                                self.child.send(b'\r')
+                                text = args[0]
+                                self.child.send(b'\x1b[200~')  # Start bracketed paste
+                                self.child.send(text.encode('utf-8'))
+                                self.child.send(b'\x1b[201~')  # End bracketed paste
+                                # Do NOT auto-submit; user presses Enter manually
+                                self.last_status = f"Pasted: {text[:20]}..." if len(text) > 20 else f"Pasted: {text}"
+                                self.draw_footer()
+
+                            elif event_type == 'voice_status':
+                                # Update voice state
+                                self.voice_active = args[0]
+                                self.voice_text_preview = args[1] if len(args) > 1 else ""
+                                if not self.voice_active:
+                                    # Only set transient finished window for the finished message
+                                    if self.voice_text_preview == "Transcribing Finished":
+                                        self.voice_finished_until = time.time() + 3
+                                        # Schedule a clear event so footer returns to nothing
+                                        def _clear_finished():
+                                            try:
+                                                self.voice_queue.put(('voice_status', False, ''))
+                                                os.write(self.voice_pipe_w, b'!')
+                                            except Exception:
+                                                pass
+                                        _t = threading.Timer(3, _clear_finished)
+                                        _t.daemon = True
+                                        _t.start()
+                                    else:
+                                        self.voice_finished_until = 0.0
+                                self.draw_footer()
+
                             elif event_type == 'status':
-                                # Update footer
-                                self.draw_footer(data)
+                                # Update general status
+                                self.draw_footer(args[0])
                     except:
                         pass
 
@@ -519,12 +592,26 @@ class CursesUI:
             self.refresh_display()
             self.draw_footer(f"Line {self.scroll_pos}")
 
-        elif key == 7:  # Ctrl+G
-            # Toggle voice
+        elif key == 7:  # Ctrl+G - Voice toggle
             if self.voice_controller:
-                self.voice_controller.toggle()
+                is_listening, captured_text = self.voice_controller.toggle()
+                # State will be updated via queue events
 
-        elif key in (10, 13, curses.KEY_ENTER):  # Enter key
+        elif key == curses.KEY_F5:  # F5 - Start listening (testing)
+            if self.voice_controller:
+                started = self.voice_controller.start_listening()
+                if not started:
+                    # Already listening or failed
+                    self.draw_footer("Voice already active or failed to start")
+
+        elif key == curses.KEY_F6:  # F6 - Stop listening (testing)
+            if self.voice_controller:
+                result = self.voice_controller.stop_listening()
+                if result is None:
+                    # Not listening
+                    self.draw_footer("Voice not active")
+
+        elif key in (10, 13, curses.KEY_ENTER):  # Enter key (LF or CR)
             # Send CR (ASCII 13) for message submission in Claude
             self.child.send(b'\r')
 
