@@ -592,6 +592,21 @@ files = [
 windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
+name = "pyte"
+version = "0.8.2"
+description = "Simple VTXXX-compatible terminal emulator."
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "pyte-0.8.2-py3-none-any.whl", hash = "sha256:85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135"},
+    {file = "pyte-0.8.2.tar.gz", hash = "sha256:5af970e843fa96a97149d64e170c984721f20e52227a2f57f0a54207f08f083f"},
+]
+
+[package.dependencies]
+wcwidth = "*"
+
+[[package]]
 name = "rapidfuzz"
 version = "3.14.1"
 description = "rapid fuzzy string matching"
@@ -869,4 +884,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "bd8e7098476e98774d838f684e6a1eb8584570b281d19aead3304fa4b4c9f777"
+content-hash = "83e6bb9ed5aaa8348918ed7cddbd9448cd2aebd5bb56e61072ce8760281377b2"

@@ -242,6 +242,7 @@ async def main_loop(child: PTYChild, voice: BufferVoiceController):
     old_attrs = termios.tcgetattr(stdin_fd)
     tty.setraw(stdin_fd)
 
+
     try:
         while True:
             r, _, _ = select.select([stdin_fd, child.master_fd], [], [], 0.1)
