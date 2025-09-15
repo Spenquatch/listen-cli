@@ -60,6 +60,8 @@ class PTYChild:
                 if hasattr(termios, 'TIOCSCTTY'):
                     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
+                # No environment hacks; run child as-is
+
                 # Execute the command
                 os.execvp(self.argv[0], self.argv)
             except Exception as e:
@@ -295,37 +297,43 @@ class CursesUI:
 
         # Color pairs (initialized later)
         self.color_pairs = {}
+        # Track cursor position for visual caret rendering
+        self.prev_cursor = None  # (y, x)
 
     def init_colors(self):
-        """Initialize basic 16 ANSI colors."""
+        """Initialize basic 16 ANSI colors (simple)."""
         if not curses.has_colors():
             return
 
         curses.start_color()
         curses.use_default_colors()
 
-        # Map basic 16 ANSI colors
         for i in range(8):
-            curses.init_pair(i + 1, i, -1)  # Normal colors
+            curses.init_pair(i + 1, i, -1)
             if curses.COLORS >= 16:
-                curses.init_pair(i + 9, i + 8, -1)  # Bright colors
+                curses.init_pair(i + 9, i + 8, -1)
 
-        # Create color name mapping
         self.color_pairs = {
             'black': 1, 'red': 2, 'green': 3, 'yellow': 4,
             'blue': 5, 'magenta': 6, 'cyan': 7, 'white': 8,
+            'brightblack': 9, 'brightred': 10, 'brightgreen': 11,
+            'brightyellow': 12, 'brightblue': 13, 'brightmagenta': 14,
+            'brightcyan': 15, 'brightwhite': 16,
             'bright_black': 9, 'bright_red': 10, 'bright_green': 11,
             'bright_yellow': 12, 'bright_blue': 13, 'bright_magenta': 14,
-            'bright_cyan': 15, 'bright_white': 16
+            'bright_cyan': 15, 'bright_white': 16,
+            'brown': 4,
         }
 
     def get_curses_attr(self, char) -> int:
         """Convert pyte character attributes to curses attributes."""
         attr = curses.A_NORMAL
 
-        # Handle colors
-        if hasattr(char, 'fg') and char.fg in self.color_pairs:
-            attr |= curses.color_pair(self.color_pairs[char.fg])
+        # Simple named-color mapping only
+        if hasattr(char, 'fg') and isinstance(getattr(char, 'fg', None), str):
+            fg_key = char.fg.lower()
+            if fg_key in self.color_pairs:
+                attr |= curses.color_pair(self.color_pairs[fg_key])
 
         # Handle text attributes
         if hasattr(char, 'bold') and char.bold:
@@ -338,6 +346,8 @@ class CursesUI:
             attr |= curses.A_REVERSE
 
         return attr
+
+    # (No overlay-caret helpers; simplified renderer)
 
     def draw_footer(self, status: str = None):
         """Draw the footer with status information and voice state."""
@@ -365,12 +375,16 @@ class CursesUI:
             else:
                 voice_indicator = ""
 
-        footer = f" {voice_indicator} | q: Quit | ↑↓: Scroll | {self.last_status} "
+        footer = f" {voice_indicator} | q: Quit | PgUp/PgDn: Scroll | {self.last_status} "
         footer = footer[:max_x].ljust(max_x)
 
         try:
             self.stdscr.addstr(footer_y, 0, footer, curses.A_REVERSE)
-            self.stdscr.refresh()
+            # Stage footer to be drawn on next doupdate()
+            try:
+                self.stdscr.noutrefresh()
+            except Exception:
+                pass
         except curses.error:
             pass
 
@@ -425,11 +439,12 @@ class CursesUI:
         # Ensure scroll position is valid
         self.scroll_pos = max(0, min(self.scroll_pos, pad_height - visible_rows))
 
+        # Refresh pad and footer (no cursor hacks)
+        self.draw_footer()
         try:
-            # Refresh the visible portion of the pad
             self.pad.refresh(
-                self.scroll_pos, 0,  # pad position
-                0, 0,                # screen position
+                self.scroll_pos, 0,
+                0, 0,
                 visible_rows - 1, min(pad_width - 1, max_x - 1)
             )
         except curses.error:
@@ -453,6 +468,10 @@ class CursesUI:
         # Recreate pad with new dimensions
         if self.pad:
             self.pad = curses.newpad(10000, self.cols)
+            try:
+                self.pad.leaveok(True)
+            except Exception:
+                pass
             # Mark all lines as dirty to force full redraw
             if self.screen:
                 self.screen.dirty.update(range(len(self.screen.display)))
@@ -471,7 +490,10 @@ class CursesUI:
         self.stdscr = stdscr
 
         # Configure curses
-        curses.curs_set(0)  # Hide cursor
+        try:
+            curses.curs_set(0)  # Hide cursor to avoid confusion
+        except Exception:
+            pass
         stdscr.nodelay(True)  # Non-blocking input
         stdscr.timeout(0)
         try:
@@ -598,23 +620,20 @@ class CursesUI:
                     except:
                         pass
 
+            # Always refresh display so the caret follows even if the child
+            # app doesn't emit output for cursor moves.
+            try:
+                self.refresh_display()
+            except Exception:
+                pass
+
     def handle_input(self, key: int):
         """Handle keyboard input."""
         if key == ord('q') or key == ord('Q'):
             # Quit
             self.running = False
 
-        elif key == curses.KEY_UP:
-            # Scroll up
-            self.scroll_pos = max(0, self.scroll_pos - 1)
-            self.refresh_display()
-            self.draw_footer(f"Line {self.scroll_pos}")
-
-        elif key == curses.KEY_DOWN:
-            # Scroll down
-            self.scroll_pos += 1
-            self.refresh_display()
-            self.draw_footer(f"Line {self.scroll_pos}")
+        # Note: Up/Down are passed through to child for in-app navigation
 
         elif key == curses.KEY_PPAGE:  # Page Up
             max_y, _ = self.stdscr.getmaxyx()
@@ -660,6 +679,8 @@ class CursesUI:
                     # Not listening
                     self.draw_footer("Voice not active")
 
+        # Removed dev diagnostics and overlay-caret toggles
+
         elif key in (10, 13, curses.KEY_ENTER):  # Enter key (LF or CR)
             # Send CR (ASCII 13) for message submission in Claude
             self.child.send(b'\r')
@@ -671,6 +692,8 @@ class CursesUI:
         else:
             # Special keys - convert to escape sequences
             key_map = {
+                curses.KEY_UP: b'\x1b[A',
+                curses.KEY_DOWN: b'\x1b[B',
                 curses.KEY_LEFT: b'\x1b[D',
                 curses.KEY_RIGHT: b'\x1b[C',
                 curses.KEY_HOME: b'\x1b[H',
