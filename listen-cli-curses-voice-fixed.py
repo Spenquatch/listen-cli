@@ -529,6 +529,12 @@ class CursesUI:
 
         # Enable keypad to properly receive function/arrow keys
         stdscr.keypad(True)
+        # Enable mouse reporting so wheel events don't translate to arrow keys
+        try:
+            curses.mousemask(curses.ALL_MOUSE_EVENTS)
+            curses.mouseinterval(0)
+        except Exception:
+            pass
 
         # Main event loop
         while self.running:
@@ -633,7 +639,28 @@ class CursesUI:
             # Quit
             self.running = False
 
-        # Note: Up/Down are passed through to child for in-app navigation
+        elif key == curses.KEY_MOUSE:
+            # Handle mouse wheel to scroll our pad only; don't send to child
+            try:
+                _, mx, my, _, bstate = curses.getmouse()
+            except Exception:
+                return
+
+            # Determine wheel up/down; fall back to common bit values if attrs missing
+            B4 = getattr(curses, 'BUTTON4_PRESSED', 0x0800)
+            B5 = getattr(curses, 'BUTTON5_PRESSED', 0x1000)
+            lines = 3
+            if bstate & B4:
+                self.scroll_pos = max(0, self.scroll_pos - lines)
+                self.refresh_display()
+            elif bstate & B5:
+                max_y, _ = self.stdscr.getmaxyx()
+                self.scroll_pos += lines
+                self.refresh_display()
+            # Do not forward mouse events to the child
+            return
+
+        # Note: Up/Down keys are passed through to child for in-app navigation
 
         elif key == curses.KEY_PPAGE:  # Page Up
             max_y, _ = self.stdscr.getmaxyx()
