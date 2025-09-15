@@ -107,6 +107,7 @@ class ThreadSafeVoiceController:
         self.pipe_w = pipe_w
         self.transcriber = None
         self.is_listening = False
+        self.state = 'idle'  # idle | active | stopping
         self.transcript_buffer = []
         self.stream_thread = None
         self.has_content = False  # Track if we have any transcript
@@ -122,20 +123,21 @@ class ThreadSafeVoiceController:
 
     def on_data(self, transcript: aai.RealtimeTranscript):
         """Transcript data callback."""
-        # Ignore any late data after listening has been stopped
-        if not self.is_listening:
+        # Process data only if in active or stopping state
+        if self.state not in ('active', 'stopping'):
             return
         if isinstance(transcript, aai.RealtimeFinalTranscript):
             text = transcript.text.strip()
             if text:
                 self.transcript_buffer.append(text + " ")
                 self.has_content = True
-                # Show real-time transcript preview (last few words)
-                preview_full = "".join(self.transcript_buffer)
-                words = preview_full.strip().split()
-                last_words = " ".join(words[-6:]) if words else ""
-                self.ui_queue.put(('voice_status', True, last_words))
-                os.write(self.pipe_w, b'!')
+                # Show real-time transcript preview only while active
+                if self.state == 'active':
+                    preview_full = "".join(self.transcript_buffer)
+                    words = preview_full.strip().split()
+                    last_words = " ".join(words[-6:]) if words else ""
+                    self.ui_queue.put(('voice_status', True, last_words))
+                    os.write(self.pipe_w, b'!')
 
     def on_error(self, error: aai.RealtimeError):
         """Error callback."""
@@ -143,6 +145,7 @@ class ThreadSafeVoiceController:
         self.ui_queue.put(('voice_status', False, ''))  # Clear any listening indicator
         os.write(self.pipe_w, b'!')
         self.is_listening = False
+        self.state = 'idle'
 
     def on_close(self):
         """Session closed callback."""
@@ -155,13 +158,14 @@ class ThreadSafeVoiceController:
 
     def start_listening(self):
         """Start voice transcription."""
-        if self.is_listening:
+        if self.state != 'idle':
             return False  # Already listening
 
         # Clear buffer for new session
         self.transcript_buffer = []
         self.has_content = False
         self.is_listening = True
+        self.state = 'active'
 
         # Update UI to show we're listening (no initial preview text)
         self.ui_queue.put(('voice_status', True, ""))
@@ -198,57 +202,61 @@ class ThreadSafeVoiceController:
             self.ui_queue.put(('voice_status', False, ''))
             os.write(self.pipe_w, b'!')
             self.is_listening = False
+            self.state = 'idle'
             return False
 
     def stop_listening(self):
         """Stop voice transcription and queue the transcript."""
-        if not self.is_listening:
+        if self.state == 'idle':
             return None  # Not listening
 
-        self.is_listening = False
+        # Move to stopping state; keep accepting final transcripts but stop UI preview
+        self.state = 'stopping'
 
-        # Update UI to show we're stopping
-        self.ui_queue.put(('voice_status', False, "Processing..."))
+        # Immediately update UI to finished; will be cleared by UI timer
+        self.ui_queue.put(('voice_status', False, "Transcribing Finished"))
         os.write(self.pipe_w, b'!')
 
-        # Close transcriber
-        if self.transcriber:
+        def _finalize_close():
             try:
-                self.transcriber.close()
-            except Exception:
-                pass
-            self.transcriber = None
+                # Close transcriber in background to avoid blocking UI
+                if self.transcriber:
+                    try:
+                        self.transcriber.close()
+                    except Exception:
+                        pass
+                    self.transcriber = None
 
-        # Get the accumulated text
-        full_text = None
-        if self.transcript_buffer:
-            full_text = "".join(self.transcript_buffer).strip()
-            if full_text:
-                # Clean up text for pasting
-                full_text = full_text.replace('\n', ' ').replace('\r', ' ')
-                full_text = re.sub(r'\s+', ' ', full_text).strip()
+                # Compute accumulated text
+                full_text = None
+                if self.transcript_buffer:
+                    full_text = "".join(self.transcript_buffer).strip()
+                    if full_text:
+                        full_text = full_text.replace('\n', ' ').replace('\r', ' ')
+                        full_text = re.sub(r'\s+', ' ', full_text).strip()
 
-        # Clear buffer
-        self.transcript_buffer = []
-        self.has_content = False
+                # Reset state to idle
+                self.is_listening = False
+                self.state = 'idle'
 
-        # Queue the paste event if we have text
-        if full_text:
-            self.ui_queue.put(('paste', full_text))
-            # Show a transient finished message; UI will clear it after a delay
-            self.ui_queue.put(('voice_status', False, "Transcribing Finished"))
-            os.write(self.pipe_w, b'!')
-            return full_text
-        else:
-            # Show a transient finished message even if nothing captured
-            self.ui_queue.put(('voice_status', False, "Transcribing Finished"))
-            self.ui_queue.put(('status', 'No voice input captured'))
-            os.write(self.pipe_w, b'!')
-            return None
+                # Send paste if we have content
+                if full_text:
+                    self.ui_queue.put(('paste', full_text))
+                else:
+                    self.ui_queue.put(('status', 'No voice input captured'))
+            finally:
+                try:
+                    os.write(self.pipe_w, b'!')
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_finalize_close, daemon=True)
+        t.start()
+        return True
 
     def toggle(self):
         """Toggle voice on/off and return new state."""
-        if self.is_listening:
+        if self.state in ('active', 'stopping'):
             text = self.stop_listening()
             return (False, text)  # (is_listening, captured_text)
         else:
@@ -466,6 +474,10 @@ class CursesUI:
         curses.curs_set(0)  # Hide cursor
         stdscr.nodelay(True)  # Non-blocking input
         stdscr.timeout(0)
+        try:
+            curses.set_escdelay(25)  # Reduce ESC sequence delay for snappier function keys
+        except Exception:
+            pass
 
         # Initialize colors
         self.init_colors()
@@ -623,7 +635,7 @@ class CursesUI:
 
         elif key == curses.KEY_F5:  # F5 - Start listening (testing)
             if self.voice_controller:
-                if self.voice_controller.is_listening:
+                if self.voice_controller.state in ('active', 'stopping'):
                     self.draw_footer("Voice already active")
                 else:
                     # Immediately reflect listening state in UI
