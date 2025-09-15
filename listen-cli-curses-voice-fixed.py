@@ -402,8 +402,9 @@ class CursesUI:
                 continue
 
             line = self.screen.display[y]
+            max_draw_x = max(0, self.cols - 1)  # leave last column blank to prevent wrap/jitter
             for x, char in enumerate(line):
-                if x >= self.cols:
+                if x >= max_draw_x:
                     break
 
                 try:
@@ -418,6 +419,11 @@ class CursesUI:
                     self.pad.addstr(y, x, ch, attr)
                 except (curses.error, UnicodeEncodeError):
                     pass
+            # Clear last column explicitly to avoid right-edge artifacts
+            try:
+                self.pad.addstr(y, max_draw_x, ' ')
+            except curses.error:
+                pass
 
     def refresh_display(self):
         """Refresh the visible portion of the pad."""
