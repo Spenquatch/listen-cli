@@ -35,8 +35,9 @@ class PTYChild:
         """Fork and exec child process in PTY."""
         self.master_fd, slave_fd = pty.openpty()
 
-        # Get current terminal size
-        rows, cols = os.get_terminal_size()
+        # Get current terminal size (lines, columns)
+        ts = os.get_terminal_size()
+        rows, cols = ts.lines, ts.columns
 
         # Set PTY size before fork
         size = struct.pack('HHHH', rows, cols, 0, 0)
@@ -139,12 +140,18 @@ class ThreadSafeVoiceController:
     def on_error(self, error: aai.RealtimeError):
         """Error callback."""
         self.ui_queue.put(('status', f'❌ Voice error: {error}'))
+        self.ui_queue.put(('voice_status', False, ''))  # Clear any listening indicator
         os.write(self.pipe_w, b'!')
         self.is_listening = False
 
     def on_close(self):
         """Session closed callback."""
-        pass
+        # Ensure UI is cleared when session closes
+        try:
+            self.ui_queue.put(('voice_status', False, ''))
+            os.write(self.pipe_w, b'!')
+        except Exception:
+            pass
 
     def start_listening(self):
         """Start voice transcription."""
@@ -158,6 +165,7 @@ class ThreadSafeVoiceController:
 
         # Update UI to show we're listening (no initial preview text)
         self.ui_queue.put(('voice_status', True, ""))
+        self.ui_queue.put(('status', 'Voice: Listening started'))
         os.write(self.pipe_w, b'!')
 
         try:
@@ -187,6 +195,7 @@ class ThreadSafeVoiceController:
 
         except Exception as e:
             self.ui_queue.put(('status', f'❌ Error starting voice: {e}'))
+            self.ui_queue.put(('voice_status', False, ''))
             os.write(self.pipe_w, b'!')
             self.is_listening = False
             return False
@@ -420,14 +429,14 @@ class CursesUI:
 
     def handle_resize(self):
         """Handle terminal resize event."""
-        # Get new dimensions
-        self.rows, self.cols = os.get_terminal_size()
-
-        # Resize curses
-        curses.resizeterm(self.rows, self.cols)
-
-        # Notify child process
-        self.child.resize(self.rows, self.cols)
+        # Get new dimensions from curses
+        if self.stdscr:
+            max_y, max_x = self.stdscr.getmaxyx()
+            self.rows, self.cols = max_y, max_x
+            # Resize curses
+            curses.resizeterm(self.rows, self.cols)
+            # Notify child process with new size
+            self.child.resize(self.rows, self.cols)
 
         # Resize pyte screen
         if self.screen:
@@ -484,10 +493,23 @@ class CursesUI:
         # Initial draw
         self.draw_footer()
 
+        # Enable keypad to properly receive function/arrow keys
+        stdscr.keypad(True)
+
         # Main event loop
         while self.running:
-            # Build select list
-            read_fds = [sys.stdin.fileno(), self.child.master_fd, self.voice_pipe_r]
+            # Drain any pending keyboard input without relying on select()
+            try:
+                while True:
+                    key = stdscr.getch()
+                    if key == -1:
+                        break
+                    self.handle_input(key)
+            except Exception:
+                pass
+
+            # Build select list for PTY + voice pipe only
+            read_fds = [self.child.master_fd, self.voice_pipe_r]
 
             try:
                 readable, _, _ = select.select(read_fds, [], [], 0.1)
@@ -554,6 +576,8 @@ class CursesUI:
                                         _t.start()
                                     else:
                                         self.voice_finished_until = 0.0
+                                        # Clear any lingering preview to avoid showing stale 'Listening:'
+                                        self.voice_text_preview = ""
                                 self.draw_footer()
 
                             elif event_type == 'status':
@@ -599,13 +623,26 @@ class CursesUI:
 
         elif key == curses.KEY_F5:  # F5 - Start listening (testing)
             if self.voice_controller:
-                started = self.voice_controller.start_listening()
-                if not started:
-                    # Already listening or failed
-                    self.draw_footer("Voice already active or failed to start")
+                if self.voice_controller.is_listening:
+                    self.draw_footer("Voice already active")
+                else:
+                    # Immediately reflect listening state in UI
+                    self.voice_active = True
+                    self.voice_text_preview = ""
+                    self.draw_footer("Starting...")
+                    started = self.voice_controller.start_listening()
+                    if not started:
+                        # Revert UI if start failed
+                        self.voice_active = False
+                        self.voice_text_preview = ""
+                        self.draw_footer("Failed to start voice (see status)")
 
         elif key == curses.KEY_F6:  # F6 - Stop listening (testing)
             if self.voice_controller:
+                # Immediately reflect stop in UI to avoid stale 'Listening:'
+                self.voice_active = False
+                self.voice_text_preview = ""
+                self.draw_footer("Stopping...")
                 result = self.voice_controller.stop_listening()
                 if result is None:
                     # Not listening
