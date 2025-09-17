@@ -8,7 +8,7 @@ readme = "README.md"
 homepage = "https://github.com/spenquatch/listen-cli"
 repository = "https://github.com/spenquatch/listen-cli"
 keywords = ["tmux", "cli", "tui", "asr", "speech-to-text"]
-packages = [{ include = "listen_cli" }]  # <— ADD THIS
+packages = [{ include = "listen_cli" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -18,8 +18,8 @@ sounddevice = ">=0.4.6"
 assemblyai = { extras = ["extras"], version = "^0.43.1" }
 
 [tool.poetry.scripts]
-listen = "listen_cli.__main__:main"
-listen-cli = "listen_cli.__main__:main"
+listen = "listen_cli.main:main"
+listen-cli = "listen_cli.main:main"
 
 [build-system]
 requires = ["poetry-core"]
