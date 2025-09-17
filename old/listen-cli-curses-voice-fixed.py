@@ -17,6 +17,7 @@ import queue
 import threading
 import re
 import time
+import subprocess
 from typing import Optional, Tuple
 
 import pyte
@@ -299,6 +300,20 @@ class CursesUI:
         self.color_pairs = {}
         # Track cursor position for visual caret rendering
         self.prev_cursor = None  # (y, x)
+        # Optional: send transcript via tmux instead of PTY
+        self.tmux_target = os.getenv('LISTEN_TMUX_TARGET')
+        self.use_tmux = bool(os.getenv('LISTEN_USE_TMUX')) and self.tmux_target
+
+    def tmux_paste(self, text: str):
+        if not self.use_tmux:
+            return False
+        try:
+            # Load into a named buffer, then paste to target pane
+            subprocess.run(['tmux', 'load-buffer', '-b', 'listen_stt', '--', text], check=True)
+            subprocess.run(['tmux', 'paste-buffer', '-t', self.tmux_target, '-b', 'listen_stt'], check=True)
+            return True
+        except Exception:
+            return False
 
     def init_colors(self):
         """Initialize basic 16 ANSI colors (simple)."""
@@ -593,11 +608,16 @@ class CursesUI:
                             event_type, *args = self.voice_queue.get()
 
                             if event_type == 'paste':
-                                # Send transcript to child with bracketed paste
                                 text = args[0]
-                                self.child.send(b'\x1b[200~')  # Start bracketed paste
-                                self.child.send(text.encode('utf-8'))
-                                self.child.send(b'\x1b[201~')  # End bracketed paste
+                                sent = False
+                                # Prefer tmux injection when configured
+                                if self.use_tmux:
+                                    sent = self.tmux_paste(text)
+                                if not sent:
+                                    # Fallback: send transcript to child with bracketed paste
+                                    self.child.send(b'\x1b[200~')  # Start bracketed paste
+                                    self.child.send(text.encode('utf-8'))
+                                    self.child.send(b'\x1b[201~')  # End bracketed paste
                                 # Do NOT auto-submit; user presses Enter manually
                                 self.last_status = f"Pasted: {text[:20]}..." if len(text) > 20 else f"Pasted: {text}"
                                 self.draw_footer()

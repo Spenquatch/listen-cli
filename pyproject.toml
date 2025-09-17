@@ -1,20 +1,25 @@
 [tool.poetry]
-name = "voice-ptt-wrapper"
+name = "listen-cli"
 version = "0.1.0"
-description = "Voice PTT wrapper for Claude Code / Codex"
-authors = ["Your Name <you@example.com>"]
-package-mode = false
+description = "ASR Wrapper for any CLI app."
+authors = ["Spenser Mcconnell <spensermcconnell@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/spenquatch/listen-cli"
+repository = "https://github.com/spenquatch/listen-cli"
+keywords = ["tmux", "cli", "tui", "asr", "speech-to-text"]
+packages = [{ include = "listen_cli" }]  # <— ADD THIS
 
 [tool.poetry.dependencies]
 python = "^3.10"
+libtmux = ">=0.46"
 websockets = ">=12.0"
 sounddevice = ">=0.4.6"
-numpy = ">=1.26.0"
-rapidfuzz = ">=3.6.1"
-rich = ">=13.7.0"
-assemblyai = {extras = ["extras"], version = "^0.43.1"}
-blessed = "^1.20.0"
-pyte = "^0.8.1"
+assemblyai = { extras = ["extras"], version = "^0.43.1" }
+
+[tool.poetry.scripts]
+listen = "listen_cli.__main__:main"
+listen-cli = "listen_cli.__main__:main"
 
 [build-system]
 requires = ["poetry-core"]
