@@ -84,6 +84,7 @@ class SilentVoiceController:
         self._thread: Optional[threading.Thread] = None
         self._listening = False
         self._buffer = []
+        self._last_partial = ""
         self._lock = threading.Lock()
 
     # --- AAI callbacks --------------------------------------------------------
@@ -99,11 +100,13 @@ class SilentVoiceController:
     def _on_data(self, t: aai.RealtimeTranscript):
         if isinstance(t, aai.RealtimePartialTranscript):
             if t.text:
+                self._last_partial = t.text
                 tmux_preview(t.text)
         elif isinstance(t, aai.RealtimeFinalTranscript):
             if t.text:
                 with self._lock:
                     self._buffer.append(t.text)
+                    self._last_partial = ""
                 tmux_preview(t.text)
 
     # --- Control --------------------------------------------------------------
@@ -138,28 +141,40 @@ class SilentVoiceController:
         self._thread = threading.Thread(target=_stream, daemon=True)
         self._thread.start()
 
-    def stop(self) -> str:
-        if not self._listening:
-            return ""
-        # Mark internal state; HUD off handled by caller or finally below
-        self._listening = False
-        try:
-            if self._transcriber:
-                self._transcriber.close()
-        finally:
-            self._transcriber = None
-            tmux_status_on(False)
-
-        text = ""
+    def _assemble_text(self) -> str:
+        parts: list[str] = []
         with self._lock:
             if self._buffer:
-                text = " ".join(self._buffer).strip()
+                parts.append(" ".join(self._buffer))
+            if self._last_partial:
+                parts.append(self._last_partial)
+        return " ".join(p for p in parts if p).strip()
 
+    def stop_quick(self) -> str:
+        """Stop listening immediately and return best-effort text.
+
+        Does not block on websocket close; use shutdown() to close resources.
+        """
+        if not self._listening:
+            return ""
+        self._listening = False
+        tmux_status_on(False)
+        text = self._assemble_text()
         if text:
             tmux("display-message", "📝 ASR captured text")
         else:
             tmux("display-message", "📭 No speech detected")
         return text
+
+    def shutdown(self) -> None:
+        """Close the realtime transcriber and stop streaming (may block)."""
+        try:
+            if self._transcriber:
+                self._transcriber.close()
+        except Exception as e:  # pragma: no cover
+            tmux("display-message", f"❌ Shutdown error: {e}")
+        finally:
+            self._transcriber = None
 
 
 class ASRDaemon:
@@ -173,9 +188,14 @@ class ASRDaemon:
 
     async def _stop_and_maybe_paste(self, pane_id: str) -> None:
         try:
-            text = await asyncio.to_thread(self.voice.stop)
+            # Get text immediately without waiting for websocket close
+            text = self.voice.stop_quick()
             if text and pane_id:
+                tmux_set_var("@asr_preview", "Pasting…")
                 paste_into_pane(pane_id, text)
+                tmux_set_var("@asr_preview", "")
+            # Close the transcriber in background to release resources
+            await asyncio.to_thread(self.voice.shutdown)
         finally:
             self._stopping = False
 
@@ -193,7 +213,7 @@ class ASRDaemon:
                 if not self._stopping:
                     self._stopping = True
                     tmux_set_var("@asr_on", "0")
-                    tmux_set_var("@asr_preview", "Finishing…")
+                    tmux_set_var("@asr_preview", "Pasting…")
                     asyncio.create_task(self._stop_and_maybe_paste(pane_id))
             writer.write(b"OK\n")
         elif cmd == "PING":
