@@ -119,7 +119,6 @@ class SilentVoiceController:
         self._buffer.clear()
         self._listening = True
         tmux_status_on(True)
-        tmux("display-message", "🎙 ASR listening… (toggle to stop)")
 
         self._transcriber = aai.RealtimeTranscriber(
             sample_rate=16000,
@@ -160,10 +159,7 @@ class SilentVoiceController:
         self._listening = False
         tmux_status_on(False)
         text = self._assemble_text()
-        if text:
-            tmux("display-message", "📝 ASR captured text")
-        else:
-            tmux("display-message", "📭 No speech detected")
+        # No popup messages; HUD will reflect state and paste will provide feedback
         return text
 
     def shutdown(self) -> None:

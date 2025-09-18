@@ -73,7 +73,6 @@ def _log_hotkey(session: str, pane_id: str) -> int:
         _tmux_cmd("set", "-gq", "@asr_on", new_state)
         _tmux_cmd("set", "-gq", "@asr_preview", preview)
         _tmux_cmd("set", "-gq", "@asr_message", message)
-        _tmux_cmd("display-message", f"LISTEN: {'REC' if new_state=='1' else 'idle'}")
         _tmux_cmd("refresh-client", "-S")
     except subprocess.CalledProcessError as exc:
         print(f"[listen-cli] tmux update failed: {exc}", file=sys.stderr)
