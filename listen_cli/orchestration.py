@@ -75,8 +75,11 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
     """Create session, bind hotkey, run app, and attach."""
     hotkey = hotkey or os.getenv("MYAPP_HOTKEY", "M-t")
     disable_asr = os.getenv("LISTEN_DISABLE_ASR")
-    server = libtmux.Server()
+    # Isolate everything in a dedicated tmux server (socket) so we don't
+    # touch the user's default tmux server or bindings.
     session_name = f"listen_{os.getpid()}"
+    socket_name = os.getenv("LISTEN_TMUX_SOCKET") or session_name
+    server = libtmux.Server(socket_name=socket_name)
     session = server.new_session(session_name=session_name, attach=False, window_command=" ".join([shlex.quote(app), *map(shlex.quote, app_args)]))
     window = session.attached_window
     pane = window.attached_pane
@@ -105,7 +108,7 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
         toggle_cmd = f"{python} -m listen_cli __toggle__ '#{{session_name}}' '#{{pane_id}}'"
         server.cmd("bind-key", "-n", hotkey, "run-shell", "-b", toggle_cmd)
 
-    # Optional escape hatch: Alt-q kills session
+    # Optional escape hatch: Alt-q kills session in this server only
     server.cmd("bind-key", "-n", "M-q", "run-shell", "-b", f"tmux detach-client \\; kill-session -t {shlex.quote(session_name)}")
 
     # Attach
