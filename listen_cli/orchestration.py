@@ -28,11 +28,12 @@ def _status_hud(session) -> None:
     # Status bar chrome
     session.set_option("status-style", "bg=colour236,fg=colour250")
     session.set_option("message-style", "bg=colour235,fg=colour222")
-    session.set_option("window-status-style", "bg=colour236,fg=colour244")
-    session.set_option("window-status-current-style", "bg=colour238,fg=colour255,bold")
+    # Make the hidden window list blend into the bar (no lighter block)
+    session.set_option("window-status-style", "bg=colour236,fg=colour236")
+    session.set_option("window-status-current-style", "bg=colour236,fg=colour236")
     session.set_option(
         "status-left",
-        '#{?@asr_on,#[fg=colour196] REC 🎙,#[fg=colour244] idle 🎙} #[fg=colour240]| #[default]'
+        '#{?@asr_on,#[fg=colour196] REC 🎙 ,#[fg=white] idle 🎙 } #[fg=colour240]| #[default]'
     )
     # Hide window list text; keep a single-space placeholder to avoid edge-cases
     session.cmd("set", "-gq", "window-status-format", " ")
