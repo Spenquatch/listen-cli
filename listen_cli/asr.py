@@ -141,6 +141,7 @@ class SilentVoiceController:
     def stop(self) -> str:
         if not self._listening:
             return ""
+        # Mark internal state; HUD off handled by caller or finally below
         self._listening = False
         try:
             if self._transcriber:
@@ -168,6 +169,15 @@ class ASRDaemon:
         self.session = session
         self.socket_path = socket_path or f"/tmp/listen-{session}.sock"
         self.voice = SilentVoiceController()
+        self._stopping = False
+
+    async def _stop_and_maybe_paste(self, pane_id: str) -> None:
+        try:
+            text = await asyncio.to_thread(self.voice.stop)
+            if text and pane_id:
+                paste_into_pane(pane_id, text)
+        finally:
+            self._stopping = False
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         data = (await reader.read(256)).decode().strip()
@@ -176,12 +186,15 @@ class ASRDaemon:
         pane_id = parts[1] if len(parts) > 1 else ""
 
         if cmd == "TOGGLE":
-            if not self.voice.is_listening():
+            if not self.voice.is_listening() and not self._stopping:
                 self.voice.start()
             else:
-                text = self.voice.stop()
-                if text and pane_id:
-                    paste_into_pane(pane_id, text)
+                # Flip HUD off immediately and stop in background so the keypress feels snappy
+                if not self._stopping:
+                    self._stopping = True
+                    tmux_set_var("@asr_on", "0")
+                    tmux_set_var("@asr_preview", "Finishing…")
+                    asyncio.create_task(self._stop_and_maybe_paste(pane_id))
             writer.write(b"OK\n")
         elif cmd == "PING":
             writer.write(b"PONG\n")
