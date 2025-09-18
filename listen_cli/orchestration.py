@@ -27,13 +27,15 @@ def _status_hud(session) -> None:
     session.set_option("status-interval", 1)
     # Status bar chrome
     session.set_option("status-style", "bg=colour236,fg=colour250")
+    session.set_option("status-left-length", 200)
     session.set_option("message-style", "bg=colour235,fg=colour222")
     # Make the hidden window list blend into the bar (no lighter block)
     session.set_option("window-status-style", "bg=colour236,fg=colour236")
     session.set_option("window-status-current-style", "bg=colour236,fg=colour236")
     session.set_option(
         "status-left",
-        '#{?@asr_on,#[fg=colour196] REC 🎙 ,#[fg=white] idle 🎙 } #[fg=colour240]| #[default]'
+        '#{?@asr_on,#[fg=colour196] REC 🎙 ,#[fg=white] idle 🎙 } '
+        '#[fg=colour240]| #[fg=colour252]#{@asr_preview} #[default]'
     )
     # Hide window list text; keep a single-space placeholder to avoid edge-cases
     session.cmd("set", "-gq", "window-status-format", " ")
@@ -45,9 +47,8 @@ def _status_hud(session) -> None:
     session.cmd("set", "-gq", "@asr_message", "")
     session.set_option(
         "status-right",
-        '#[fg=colour252]#{@asr_preview} '
-        '#{?@asr_message,#[fg=colour240]| #{@asr_message},} '
-        '#[fg=colour240]| #[fg=white]%I:%M %p #[default]'
+        '#{?@asr_message,#[fg=colour240]#{@asr_message} #[fg=colour240]| ,}'
+        ' #[fg=white]%I:%M %p #[default]'
     )
     # Do not override status-format at this time; keep defaults to avoid side effects.
 
