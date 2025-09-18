@@ -63,7 +63,6 @@ def paste_into_pane(pane_id: str, text: str) -> None:
         tmux("load-buffer", "-b", "listen_asr", path)
         tmux("paste-buffer", "-p", "-b", "listen_asr", "-t", pane_id)
         tmux("delete-buffer", "-b", "listen_asr")
-        tmux("display-message", f"✅ Pasted ASR into {pane_id}")
     finally:
         try:
             os.unlink(path)

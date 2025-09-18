@@ -32,7 +32,7 @@ def _status_hud(session) -> None:
     session.set_option("window-status-current-style", "bg=colour238,fg=colour255,bold")
     session.set_option(
         "status-left",
-        '#{?@asr_on,#[fg=colour196]REC 🎙,#[fg=colour244]idle 🎙} #[fg=colour240]| #[default]'
+        '#{?@asr_on,#[fg=colour196] REC 🎙,#[fg=colour244] idle 🎙} #[fg=colour240]| #[default]'
     )
     # Hide window list text; keep a single-space placeholder to avoid edge-cases
     session.cmd("set", "-gq", "window-status-format", " ")
@@ -46,7 +46,7 @@ def _status_hud(session) -> None:
         "status-right",
         '#[fg=colour252]#{@asr_preview} '
         '#{?@asr_message,#[fg=colour240]| #{@asr_message},} '
-        '#[fg=colour240]| %H:%M #[default]'
+        '#[fg=colour240]| #[fg=white]%I:%M %p #[default]'
     )
     # Do not override status-format at this time; keep defaults to avoid side effects.
 
