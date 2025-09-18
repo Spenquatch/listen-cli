@@ -30,6 +30,9 @@ def _status_hud(session) -> None:
     session.set_option("window-status-style", "bg=colour236,fg=colour244")
     session.set_option("window-status-current-style", "bg=colour238,fg=colour255,bold")
     session.set_option("status-left", "")
+    # Hide window list text; keep a single-space placeholder to avoid edge-cases
+    session.cmd("set", "-gq", "window-status-format", " ")
+    session.cmd("set", "-gq", "window-status-current-format", " ")
 
     # Initialize HUD variables
     session.cmd("set", "-gq", "@asr_on", "0")
@@ -42,6 +45,7 @@ def _status_hud(session) -> None:
         '#{?@asr_message,#[fg=colour240]| #{@asr_message},} '
         '#[fg=colour240]| %H:%M #[default]'
     )
+    # Do not override status-format at this time; keep defaults to avoid side effects.
 
 
 def _kiosk_mode(session, server) -> None:
