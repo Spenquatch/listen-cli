@@ -29,6 +29,8 @@ from typing import Callable, Optional, Tuple
 from .engines.base import BaseEngine
 
 HUD_THROTTLE_DEFAULT = int(os.getenv("LISTEN_HUD_THROTTLE_MS", "75"))
+DEBUG_MODE = os.getenv("LISTEN_DEBUG")
+DEBUG_PATH = os.getenv("LISTEN_DEBUG_LOG") or "/tmp/listen-daemon.log"
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +72,16 @@ def paste_into_pane(pane_id: str, text: str) -> None:
             os.unlink(path)
         except OSError:
             pass
+
+
+def debug_log(message: str) -> None:
+    if not DEBUG_MODE:
+        return
+    try:
+        with open(DEBUG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +164,19 @@ def make_engine(
         return engine, provider_name
 
     if provider:
-        return _build(provider)
+        engine, name = _build(provider)
+        debug_log(f"engine-selection override provider={name}")
+        return engine, name
 
     if _ensure_sherpa_env():
-        return _build("sherpa_onnx")
+        engine, name = _build("sherpa_onnx")
+        debug_log("engine-selection auto provider=sherpa_onnx")
+        return engine, name
 
     if os.getenv("ASSEMBLYAI_API_KEY"):
-        return _build("assemblyai")
+        engine, name = _build("assemblyai")
+        debug_log("engine-selection auto provider=assemblyai")
+        return engine, name
 
     raise RuntimeError(
         "No ASR provider configured. Set LISTEN_SHERPA_* env vars or ASSEMBLYAI_API_KEY."
@@ -177,19 +195,26 @@ class ASRDaemon:
         self.socket_path = socket_path or f"/tmp/listen-{session}.sock"
         self._stopping = False
         self._hud_throttle = HUD_THROTTLE_DEFAULT
-        self.engine, self.provider = make_engine(
-            on_partial=self._on_partial,
-            on_final=self._on_final,
-            on_error=self._on_error,
-            hud_throttle_ms=self._hud_throttle,
-        )
+        try:
+            self.engine, self.provider = make_engine(
+                on_partial=self._on_partial,
+                on_final=self._on_final,
+                on_error=self._on_error,
+                hud_throttle_ms=self._hud_throttle,
+            )
+        except Exception as exc:
+            debug_log(f"engine init failed: {exc}")
+            raise
+        debug_log(f"daemon init session={session} provider={self.provider}")
         tmux_set_var("@asr_preview", "")
         tmux_status_on(False)
         if self._should_prewarm():
             prewarm = getattr(self.engine, "prewarm", None)
             if callable(prewarm):
                 try:
+                    debug_log("daemon prewarm start")
                     prewarm()
+                    debug_log("daemon prewarm done")
                 except Exception as exc:  # pragma: no cover
                     self._on_error(str(exc))
 
@@ -202,6 +227,7 @@ class ASRDaemon:
 
     def _on_error(self, message: str) -> None:
         tmux_preview(f"Error: {message}")
+        debug_log(f"engine error: {message}")
 
     # Internal helpers -------------------------------------------------------
     def _should_prewarm(self) -> bool:
@@ -213,32 +239,40 @@ class ASRDaemon:
         return self.provider == "sherpa_onnx"
 
     def _start(self) -> None:
+        debug_log("toggle start")
         tmux_status_on(True)
         tmux_preview("")
         try:
             self.engine.start()
+            debug_log("engine start dispatched")
         except Exception as exc:  # pragma: no cover
             tmux_status_on(False)
             self._on_error(str(exc))
+            debug_log(f"engine start error: {exc}")
 
     async def _stop_and_maybe_paste(self, pane_id: str) -> None:
         try:
+            debug_log("toggle stop_quick begin")
             text = self.engine.stop_quick()
+            debug_log(f"toggle stop_quick text_len={len(text)}")
             if text.strip() and pane_id:
                 paste_into_pane(pane_id, text)
             tmux_preview("")
         finally:
             self._stopping = False
+            debug_log("toggle stop complete")
 
     def toggle(self, pane_id: str) -> None:
         if not self.engine.is_listening() and not self._stopping:
             self._start()
             return
         if self._stopping:
+            debug_log("toggle ignored (stopping)")
             return
         self._stopping = True
         tmux_status_on(False)
         tmux_preview("Pasting…")
+        debug_log("toggle stop scheduled")
         asyncio.create_task(self._stop_and_maybe_paste(pane_id))
 
     # Socket plumbing --------------------------------------------------------
@@ -249,6 +283,7 @@ class ASRDaemon:
         pane_id = parts[1] if len(parts) > 1 else ""
 
         if cmd == "TOGGLE":
+            debug_log(f"socket toggle pane={pane_id}")
             self.toggle(pane_id)
             writer.write(b"OK\n")
         elif cmd == "PING":
@@ -281,8 +316,11 @@ class ASRDaemon:
             server.close()
             await server.wait_closed()
             if self.engine.is_listening():
+                debug_log("shutdown while listening")
                 self.engine.stop_quick()
+            debug_log("daemon shutdown begin")
             await asyncio.to_thread(self.engine.shutdown)
+            debug_log("daemon shutdown done")
 
 
 def main():

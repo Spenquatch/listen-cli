@@ -15,6 +15,7 @@ import sys
 from typing import Optional
 
 import libtmux  # pip install libtmux
+from libtmux.exc import LibTmuxException
 
 
 def _tmux_cmd(*args: str) -> None:
@@ -120,5 +121,17 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
     # Optional escape hatch: Alt-q kills session in this server only
     server.cmd("bind-key", "-n", "M-q", "run-shell", "-b", f"tmux detach-client \\; kill-session -t {shlex.quote(session_name)}")
 
+    # Set up hook to kill session when main pane exits
+    # This ensures cleanup happens when the main app (nano, etc.) exits normally
+    # We check if the dying pane is in window 0 (the main app window, not the .asr window)
+    hook_cmd = f"if -F '#{{==:#{{window_index}},0}}' 'kill-session -t {shlex.quote(session_name)}'"
+    server.cmd("set-hook", "-t", session_name, "pane-died", hook_cmd)
+
     # Attach
-    server.attach_session(target_session=session_name)
+    try:
+        server.attach_session(target_session=session_name)
+    finally:
+        try:
+            server.cmd("kill-session", "-t", session_name)
+        except LibTmuxException:
+            pass
