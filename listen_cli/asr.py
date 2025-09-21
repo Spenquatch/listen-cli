@@ -11,7 +11,7 @@ Env:
   LISTEN_SOCKET           (path to UDS socket; default /tmp/listen-<session>.sock)
   LISTEN_ASR_PROVIDER     (assemblyai|sherpa_onnx; optional)
   LISTEN_PREWARM          (auto|always|never; optional)
-  LISTEN_LOCAL_HOTMIC     (auto|on|off; optional, controls local engine hot-mic)
+  BACKGROUND_ALWAYS_LISTEN (on|off; optional override for local hot mic)
   LISTEN_HUD_THROTTLE_MS  (throttle for HUD updates; optional)
   LISTEN_SHERPA_*         (model paths for sherpa-onnx provider)
   ASSEMBLYAI_API_KEY      (required for AssemblyAI provider)
@@ -139,12 +139,13 @@ def _ensure_sherpa_env() -> bool:
     return all(required.values())
 
 
-def _should_use_hot_mic(provider: str) -> bool:
-    mode = (os.getenv("LISTEN_LOCAL_HOTMIC", "auto") or "").strip().lower()
-    if mode in {"always", "on", "true", "1"}:
-        return True
-    if mode in {"never", "off", "false", "0"}:
-        return False
+def _use_hot_mic(provider: str) -> bool:
+    override = (os.getenv("BACKGROUND_ALWAYS_LISTEN") or "").strip().lower()
+    if override:
+        if override in {"always", "on", "true", "1", "yes"}:
+            return True
+        if override in {"never", "off", "false", "0", "no"}:
+            return False
     return provider in LOCAL_PROVIDERS
 
 
@@ -170,7 +171,7 @@ def make_engine(
                 "on_final": on_final,
                 "on_error": on_error,
                 "hud_throttle_ms": hud_throttle_ms,
-                "hot_mic": _should_use_hot_mic(provider_name),
+                "hot_mic": _use_hot_mic(provider_name),
             }
             engine = engine_cls(**kwargs)
             return engine, provider_name
