@@ -66,7 +66,7 @@ def _kiosk_mode(session, server) -> None:
         server.cmd("unbind-key", "-T", tbl, "-a")
 
 
-def _start_asr_window(session, session_name: str, env_socket: str) -> None:
+def _start_asr_window(session, session_name: str, env_socket: str, socket_name: str) -> None:
     """Run the ASR daemon in a hidden window tied to this session."""
     python = shlex.quote(sys.executable)
     cmd = f"{python} -m listen_cli.asr"
@@ -77,6 +77,7 @@ def _start_asr_window(session, session_name: str, env_socket: str) -> None:
         environment={
             "LISTEN_SESSION": session_name,
             "LISTEN_SOCKET": env_socket,
+            "TMUX_SOCKET": socket_name,  # Pass the socket name for tmux commands
         },
     )
 
@@ -100,7 +101,7 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
     # Start ASR daemon in hidden window with known socket path
     socket_path = f"/tmp/listen-{session_name}.sock"
     if not disable_asr:
-        _start_asr_window(session, session_name, socket_path)
+        _start_asr_window(session, session_name, socket_path, socket_name)
     else:
         session.cmd("display-message", "LISTEN: ASR disabled (LISTEN_DISABLE_ASR set)")
     window.select_window()
@@ -121,17 +122,18 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
     # Optional escape hatch: Alt-q kills session in this server only
     server.cmd("bind-key", "-n", "M-q", "run-shell", "-b", f"tmux detach-client \\; kill-session -t {shlex.quote(session_name)}")
 
-    # Set up hook to kill session when main pane exits
-    # This ensures cleanup happens when the main app (nano, etc.) exits normally
-    # We check if the dying pane is in window 0 (the main app window, not the .asr window)
-    hook_cmd = f"if -F '#{{==:#{{window_index}},0}}' 'kill-session -t {shlex.quote(session_name)}'"
-    server.cmd("set-hook", "-t", session_name, "pane-died", hook_cmd)
-
-    # Attach
+    # Attach - this will block until the session ends or we detach
     try:
         server.attach_session(target_session=session_name)
     finally:
+        # Kill the tmux session if it still exists
         try:
             server.cmd("kill-session", "-t", session_name)
         except LibTmuxException:
+            pass
+        # Kill the entire custom tmux server to ensure cleanup
+        try:
+            subprocess.run(["tmux", "-L", socket_name, "kill-server"],
+                         check=False, capture_output=True)
+        except Exception:
             pass
