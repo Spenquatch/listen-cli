@@ -23,6 +23,7 @@ Hot model, cold mic (no first‑word cutoffs)
 - Keep models/recognizers loaded ("hot") for the life of the tmux session. Local engines (sherpa-onnx) keep the microphone loop warm continuously; the toggle only gates HUD updates and pasting.
 - Remote providers (AssemblyAI, etc.) continue to start/stop mic capture on each toggle.
 - `BACKGROUND_ALWAYS_LISTEN=off` forces local engines back to push-to-talk; `on` forces continuous loops even for future local models.
+- `BACKGROUND_PREBUFFER_SECONDS` (default 0.4s) keeps a rolling buffer of idle audio so the first toggle includes opening syllables.
 
 Invariants you MUST keep
 - Paste uses tmux buffer + `paste-buffer -p` (bracketed paste). Never write to the app pty directly.
@@ -397,8 +398,9 @@ Prewarm policy (single knob)
   - `always`: prewarm all providers (including remote); audio capture still depends on whether the provider runs continuously (local) or push-to-talk (remote).
   - `never`: prewarm none (construct/connect on first toggle only).
 
-Hot-mic override
+Hot-mic overrides & prebuffer
 - `BACKGROUND_ALWAYS_LISTEN=on|off` (unset uses provider defaults). Use `off` to keep local engines push-to-talk; `on` to force continuous loops in any background-capable engine.
+- `BACKGROUND_PREBUFFER_SECONDS` adjusts how much idle audio is queued before each hot-mic toggle.
 
 Default provider selection
 - If the four sherpa model files are available (`LISTEN_SHERPA_TOKENS/ENCODER/DECODER/JOINER` or a shipped model directory), default to `sherpa_onnx`.
@@ -557,8 +559,8 @@ ASR engine thread doesn’t stop
 HUD preview missing on left
 - Confirm `status-left-length` is large; ensure `@asr_preview` is updated and throttling isn’t set too high.
 
-First tokens missing after first toggle
-- Confirm prewarm policy: local engines prewarm at daemon start and keep the mic loop hot automatically (unless `BACKGROUND_ALWAYS_LISTEN=off`); remote engines prewarm only if `LISTEN_PREWARM=always`.
+- First tokens missing after first toggle
+- Confirm prewarm policy: local engines prewarm at daemon start and keep the mic loop hot automatically (unless `BACKGROUND_ALWAYS_LISTEN=off`); tune `BACKGROUND_PREBUFFER_SECONDS` if the opening syllables are still clipped. Remote engines prewarm only if `LISTEN_PREWARM=always`.
 - For sherpa‑onnx, ensure `OnlineRecognizer.from_transducer()` is called during engine construction, not at first toggle.
 
 -------------------------------------------------------------------------------

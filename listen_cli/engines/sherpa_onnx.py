@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -64,6 +65,10 @@ class SherpaOnnxEngine(BaseEngine):
         self.mic_rate = int(os.getenv("LISTEN_SAMPLE_RATE", "48000"))
         self.chunk_ms = int(os.getenv("LISTEN_CHUNK_MS", "100"))
         self._initial_padding_frames = int(0.12 * self.mic_rate)
+        self._prebuffer_seconds = float(os.getenv("BACKGROUND_PREBUFFER_SECONDS", "0.4"))
+        self._prebuffer_max_frames = max(0, int(self.mic_rate * self._prebuffer_seconds))
+        self._prebuffer = deque()
+        self._prebuffer_frames = 0
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -77,6 +82,7 @@ class SherpaOnnxEngine(BaseEngine):
         self._latest_result = ""
         self._listening = False
         self._padding_frames = 0
+        self._prebuffer_needs_flush = False
 
         if self.hot_mic:
             # Kick off the background loop immediately so the mic stays warm.
@@ -131,6 +137,42 @@ class SherpaOnnxEngine(BaseEngine):
             while self.recognizer.is_ready(self.stream):
                 self.recognizer.decode_stream(self.stream)
 
+    def _append_prebuffer(self, samples: np.ndarray) -> None:
+        if self._prebuffer_max_frames == 0:
+            return
+        # Copy to avoid referencing reused buffers from sounddevice
+        chunk = np.array(samples, dtype="float32", copy=True)
+        frames = len(chunk)
+        if frames == 0:
+            return
+        with self._state_lock:
+            self._prebuffer.append(chunk)
+            self._prebuffer_frames += frames
+            while self._prebuffer_frames > self._prebuffer_max_frames and self._prebuffer:
+                oldest = self._prebuffer.popleft()
+                self._prebuffer_frames -= len(oldest)
+
+    def _drain_prebuffer(self) -> None:
+        if self._prebuffer_max_frames == 0:
+            return
+        pending = []
+        with self._state_lock:
+            if not self._prebuffer:
+                self._prebuffer_needs_flush = False
+                return
+            pending = list(self._prebuffer)
+            self._prebuffer.clear()
+            self._prebuffer_frames = 0
+            self._prebuffer_needs_flush = False
+        for chunk in pending:
+            self._process_samples(chunk)
+
+    def _reset_prebuffer(self) -> None:
+        with self._state_lock:
+            self._prebuffer.clear()
+            self._prebuffer_frames = 0
+            self._prebuffer_needs_flush = False
+
     def _inject_padding_if_needed(self) -> None:
         with self._state_lock:
             padding = self._padding_frames
@@ -152,9 +194,12 @@ class SherpaOnnxEngine(BaseEngine):
                     if not self.is_listening():
                         if self._shutdown_event.is_set():
                             break
-                        mic.read()  # discard chunk to keep stream alive
+                        samples = mic.read()
+                        self._append_prebuffer(samples)
                         continue
 
+                    if self._prebuffer_needs_flush:
+                        self._drain_prebuffer()
                     self._inject_padding_if_needed()
                     samples = mic.read()
                     if self._shutdown_event.is_set():
@@ -190,6 +235,8 @@ class SherpaOnnxEngine(BaseEngine):
                 self._padding_frames = self._initial_padding_frames
                 self._listening = True
                 self._last_hud_ts = 0.0
+                if self._prebuffer_max_frames:
+                    self._prebuffer_needs_flush = True
             return
 
         with self._state_lock:
@@ -239,6 +286,7 @@ class SherpaOnnxEngine(BaseEngine):
             if not self._listening:
                 return ""
             self._listening = False
+            self._reset_prebuffer()
 
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -259,6 +307,7 @@ class SherpaOnnxEngine(BaseEngine):
             self._shutdown_event.set()
             if self._thread and self._thread.is_alive():
                 self._thread.join(timeout=1.5)
+            self._reset_prebuffer()
             return
 
         self._stop_event.set()

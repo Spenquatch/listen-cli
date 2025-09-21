@@ -12,6 +12,7 @@ Env:
   LISTEN_ASR_PROVIDER     (assemblyai|sherpa_onnx; optional)
   LISTEN_PREWARM          (auto|always|never; optional)
   BACKGROUND_ALWAYS_LISTEN (on|off; optional override for local hot mic)
+  BACKGROUND_PREBUFFER_SECONDS (float seconds of pre-roll for local hot mic)
   LISTEN_HUD_THROTTLE_MS  (throttle for HUD updates; optional)
   LISTEN_SHERPA_*         (model paths for sherpa-onnx provider)
   ASSEMBLYAI_API_KEY      (required for AssemblyAI provider)

@@ -34,6 +34,7 @@ If you keep the bundle in the repo at `sherpa/models/zipformer-en20m/`, the daem
 - Endpoint tuning via `LISTEN_SHERPA_RULE1`, `RULE2`, `RULE3`
 
 For local engines we keep the microphone loop warm by default so the first words are never clipped. The hotkey simply decides when HUD updates and pastes occur. Set `BACKGROUND_ALWAYS_LISTEN=off` if you need the legacy push-to-talk behavior.
+`BACKGROUND_PREBUFFER_SECONDS` (default `0.4`) controls how much pre-roll audio we keep while idle so the first utterance always includes its opening syllables.
 
 ### AssemblyAI realtime
 
@@ -54,7 +55,7 @@ Control when engines prewarm with `LISTEN_PREWARM` (`auto` default):
 - `always`: prewarm all providers (including remote)
 - `never`: lazy-load on the first toggle
 
-`BACKGROUND_ALWAYS_LISTEN` lets you force the microphone loop on (`on`/`true`) or revert to push-to-talk (`off`/`false`) regardless of provider defaults.
+`BACKGROUND_ALWAYS_LISTEN` lets you force the microphone loop on (`on`/`true`) or revert to push-to-talk (`off`/`false`) regardless of provider defaults. Tune `BACKGROUND_PREBUFFER_SECONDS` if you want more or less pre-roll audio captured before each toggle.
 
 ## Smoke tests
 
