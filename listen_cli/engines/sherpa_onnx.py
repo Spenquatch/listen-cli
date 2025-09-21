@@ -42,14 +42,15 @@ class SherpaOnnxEngine(BaseEngine):
             num_threads=threads,
             sample_rate=16000,
             feature_dim=80,
-            enable_endpoint_detection=True,
+            enable_endpoint_detection=False,  # Disable VAD for manual toggle
             rule1_min_trailing_silence=rule1,
             rule2_min_trailing_silence=rule2,
             rule3_min_utterance_length=rule3,
             decoding_method=decoding,
         )
 
-        self.stream: Optional[sherpa_onnx.OnlineStream] = None
+        # Create the stream once and reuse it (recommended for push-to-talk)
+        self.stream = self.recognizer.create_stream()
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._buffer: list[str] = []
@@ -75,15 +76,8 @@ class SherpaOnnxEngine(BaseEngine):
                         with self._lock:
                             self._last_partial = partial
                         self._emit_partial(partial)
-                    if self.recognizer.is_endpoint(self.stream):
-                        final_text = self.recognizer.get_result(self.stream)
-                        if final_text:
-                            with self._lock:
-                                self._buffer.append(final_text)
-                                self._last_partial = ""
-                            self._emit_partial(final_text)
-                            self.on_final(final_text)
-                        self.recognizer.reset(self.stream)
+                    # Note: No endpoint detection since we disabled VAD
+                    # Manual toggle controls when to stop/finalize
         except Exception as exc:  # pragma: no cover
             self.on_error(str(exc))
 
@@ -93,7 +87,15 @@ class SherpaOnnxEngine(BaseEngine):
     def start(self) -> None:
         if self._running:
             return
-        self.stream = self.recognizer.create_stream()
+
+        # Reset the existing stream for new push-to-talk session
+        self.recognizer.reset(self.stream)
+
+        # Add initial silence padding to help with beginning-of-utterance detection
+        initial_padding_samples = int(0.1 * 16000)  # 0.1 seconds at 16kHz
+        silence = [0.0] * initial_padding_samples
+        self.stream.accept_waveform(16000, silence)
+
         self._buffer.clear()
         self._last_partial = ""
         self._stop_event.clear()
@@ -116,6 +118,23 @@ class SherpaOnnxEngine(BaseEngine):
             return ""
         self._running = False
         self._stop_event.set()
+
+        # Wait for thread to stop and get final result
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+
+        # Get the final result and reset for next session
+        if self.stream:
+            # Get any remaining result
+            final_text = self.recognizer.get_result(self.stream)
+            if final_text:
+                with self._lock:
+                    self._buffer.append(final_text)
+                    self._last_partial = ""
+
+            # Reset stream for next toggle session
+            self.recognizer.reset(self.stream)
+
         return self._assemble_text()
 
     def shutdown(self) -> None:
@@ -124,7 +143,7 @@ class SherpaOnnxEngine(BaseEngine):
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._thread = None
-        self.stream = None
+        # Note: stream stays alive for reuse, only set to None on true shutdown
 
     def prewarm(self) -> None:
         # Recognizer construction loads models eagerly, so nothing else to do.

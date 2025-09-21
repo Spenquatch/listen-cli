@@ -122,7 +122,8 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
         log_cmd = f"{python} -m listen_cli __log__ '#{{session_name}}' '#{{pane_id}}'"
         server.cmd("bind-key", "-n", hotkey, "run-shell", "-b", log_cmd)
     else:
-        toggle_cmd = f"{python} -m listen_cli __toggle__ '#{{session_name}}' '#{{pane_id}}'"
+        # Pass the socket path to the toggle command so it can find the ASR daemon
+        toggle_cmd = f"LISTEN_SOCKET={shlex.quote(socket_path)} {python} -m listen_cli __toggle__ '#{{session_name}}' '#{{pane_id}}'"
         server.cmd("bind-key", "-n", hotkey, "run-shell", "-b", toggle_cmd)
 
     # Optional escape hatch: Alt-q kills session in this server only
