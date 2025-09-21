@@ -19,9 +19,9 @@ Key behaviors
 - No popups; no pane focus changes; fast paste.
 
 Hot model, cold mic (no first‑word cutoffs)
-- Engines must be prewarmed so there is zero model warm‑up delay on the first toggle.
-- Keep models/recognizers loaded ("hot") for the life of the tmux session, but do not feed audio until the user toggles on.
-- Mic capture and decode loops start only on toggle‑on and stop on toggle‑off.
+- Engines must be prewarmed so there is zero model warm-up delay on the first toggle.
+- Keep models/recognizers loaded ("hot") for the life of the tmux session. Local engines (sherpa-onnx) now keep the microphone loop warm continuously; the toggle only gates HUD updates and pasting.
+- Remote providers (AssemblyAI, etc.) continue to start/stop mic capture on each toggle.
 
 Invariants you MUST keep
 - Paste uses tmux buffer + `paste-buffer -p` (bracketed paste). Never write to the app pty directly.
@@ -393,8 +393,14 @@ Prewarm policy (single knob)
 - Default behavior: prewarm local engines (e.g., sherpa‑onnx) at daemon start; do not prewarm remote engines (AssemblyAI).
 - Env control: `LISTEN_PREWARM=auto|always|never` (default `auto`).
   - `auto`: prewarm only local engines; remote engines connect on toggle.
-  - `always`: prewarm all providers (including remote), but still DO NOT send audio until REC.
+  - `always`: prewarm all providers (including remote); audio capture remains gated by the provider’s hot-mic policy (`LISTEN_LOCAL_HOTMIC`).
   - `never`: prewarm none (construct/connect on first toggle only).
+
+Hot-mic policy
+- `LISTEN_LOCAL_HOTMIC=auto|on|off` (default `auto`).
+  - `auto`: local providers (sherpa-onnx) keep the microphone loop running continuously; remote providers stay push-to-talk.
+  - `on`: force continuous capture for all local-capable engines.
+  - `off`: revert to starting/stopping the mic and decoder loop on each toggle.
 
 Default provider selection
 - If the four sherpa model files are available (`LISTEN_SHERPA_TOKENS/ENCODER/DECODER/JOINER` or a shipped model directory), default to `sherpa_onnx`.
@@ -519,7 +525,7 @@ sherpa‑onnx
 
 First‑word capture (no warm‑up cutoffs)
 - Immediately after launching a new session (before any toggle), wait ~2–3 seconds and press the hotkey. The first partial should appear within ~100–200 ms, not seconds.
-- If the first tokens are missing, verify prewarm is working: for sherpa‑onnx the recognizer must be constructed when the daemon starts; for remote providers, set `LISTEN_PREWARM=always` if you want to prewarm remote as well (still no audio until REC).
+- If the first tokens are missing, verify prewarm is working: sherpa-onnx builds the recognizer and keeps the mic warm from daemon start; remote providers may still need `LISTEN_PREWARM=always` plus a toggle before audio flows.
 
 Edge cases
 - Toggle on/off quickly without speaking: HUD flips correctly, preview clears, and no paste occurs.
@@ -548,13 +554,13 @@ Paste slow
 - Ensure `stop_quick()` returns immediately and `shutdown()` happens in background.
 
 ASR engine thread doesn’t stop
-- Ensure engine loops check a `_running` flag; `stop_quick()` sets `_running=False`; `shutdown()` joins the thread.
+- Ensure the loop honors the stop signals: `_stop_event` for push-to-talk mode and `_shutdown_event`/`_listening` gates for hot-mic mode. `stop_quick()` should flip those flags and `shutdown()` must join the background thread.
 
 HUD preview missing on left
 - Confirm `status-left-length` is large; ensure `@asr_preview` is updated and throttling isn’t set too high.
 
 First tokens missing after first toggle
-- Confirm prewarm policy: local engines prewarm at daemon start; remote engines prewarm only if `LISTEN_PREWARM=always`.
+- Confirm prewarm policy: local engines prewarm at daemon start and, with `LISTEN_LOCAL_HOTMIC` left at `auto`, keep the mic loop hot; remote engines prewarm only if `LISTEN_PREWARM=always`.
 - For sherpa‑onnx, ensure `OnlineRecognizer.from_transducer()` is called during engine construction, not at first toggle.
 
 -------------------------------------------------------------------------------

@@ -33,6 +33,8 @@ If you keep the bundle in the repo at `sherpa/models/zipformer-en20m/`, the daem
 - `LISTEN_SHERPA_DECODING` (`greedy_search`, `modified_beam_search`, …)
 - Endpoint tuning via `LISTEN_SHERPA_RULE1`, `RULE2`, `RULE3`
 
+For local engines we keep the microphone loop warm by default so the first words are never clipped. The hotkey simply decides when HUD updates and pastes occur. If you prefer the legacy push-to-talk behavior, set `LISTEN_LOCAL_HOTMIC=off`.
+
 ### AssemblyAI realtime
 
 Set your API key and either let auto-detection fall back to it or force it explicitly:
@@ -51,6 +53,12 @@ Control when engines prewarm with `LISTEN_PREWARM` (`auto` default):
 - `auto`: prewarm only local engines (sherpa-onnx)
 - `always`: prewarm all providers (including remote)
 - `never`: lazy-load on the first toggle
+
+`LISTEN_LOCAL_HOTMIC` controls whether local engines (currently sherpa-onnx) run the microphone loop continuously:
+
+- `auto` (default): hot-mic on for local providers, off otherwise
+- `on`: force continuous capture even for future local engines
+- `off`: revert to starting/stopping the mic on each toggle
 
 ## Smoke tests
 

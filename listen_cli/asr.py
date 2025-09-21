@@ -11,6 +11,7 @@ Env:
   LISTEN_SOCKET           (path to UDS socket; default /tmp/listen-<session>.sock)
   LISTEN_ASR_PROVIDER     (assemblyai|sherpa_onnx; optional)
   LISTEN_PREWARM          (auto|always|never; optional)
+  LISTEN_LOCAL_HOTMIC     (auto|on|off; optional, controls local engine hot-mic)
   LISTEN_HUD_THROTTLE_MS  (throttle for HUD updates; optional)
   LISTEN_SHERPA_*         (model paths for sherpa-onnx provider)
   ASSEMBLYAI_API_KEY      (required for AssemblyAI provider)
@@ -29,6 +30,7 @@ from typing import Callable, Optional, Tuple
 from .engines.base import BaseEngine
 
 HUD_THROTTLE_DEFAULT = int(os.getenv("LISTEN_HUD_THROTTLE_MS", "75"))
+LOCAL_PROVIDERS = {"sherpa_onnx"}
 DEBUG_MODE = os.getenv("LISTEN_DEBUG")
 DEBUG_PATH = os.getenv("LISTEN_DEBUG_LOG") or "/tmp/listen-daemon.log"
 
@@ -137,6 +139,15 @@ def _ensure_sherpa_env() -> bool:
     return all(required.values())
 
 
+def _should_use_hot_mic(provider: str) -> bool:
+    mode = (os.getenv("LISTEN_LOCAL_HOTMIC", "auto") or "").strip().lower()
+    if mode in {"always", "on", "true", "1"}:
+        return True
+    if mode in {"never", "off", "false", "0"}:
+        return False
+    return provider in LOCAL_PROVIDERS
+
+
 def make_engine(
     on_partial: Callable[[str], None],
     on_final: Callable[[str], None],
@@ -154,6 +165,15 @@ def make_engine(
                 raise RuntimeError("Missing LISTEN_SHERPA_* paths for sherpa-onnx provider")
             module = import_module("listen_cli.engines.sherpa_onnx")
             engine_cls = getattr(module, "SherpaOnnxEngine")
+            kwargs = {
+                "on_partial": on_partial,
+                "on_final": on_final,
+                "on_error": on_error,
+                "hud_throttle_ms": hud_throttle_ms,
+                "hot_mic": _should_use_hot_mic(provider_name),
+            }
+            engine = engine_cls(**kwargs)
+            return engine, provider_name
         elif provider_name == "assemblyai":
             module = import_module("listen_cli.engines.assemblyai")
             engine_cls = getattr(module, "AssemblyAIEngine")
@@ -169,17 +189,21 @@ def make_engine(
 
     if provider:
         engine, name = _build(provider)
-        debug_log(f"engine-selection override provider={name}")
+        debug_log(
+            f"engine-selection override provider={name} hot_mic={getattr(engine, 'hot_mic', False)}"
+        )
         return engine, name
 
     if _ensure_sherpa_env():
         engine, name = _build("sherpa_onnx")
-        debug_log("engine-selection auto provider=sherpa_onnx")
+        debug_log(
+            f"engine-selection auto provider=sherpa_onnx hot_mic={getattr(engine, 'hot_mic', False)}"
+        )
         return engine, name
 
     if os.getenv("ASSEMBLYAI_API_KEY"):
         engine, name = _build("assemblyai")
-        debug_log("engine-selection auto provider=assemblyai")
+        debug_log("engine-selection auto provider=assemblyai hot_mic=False")
         return engine, name
 
     raise RuntimeError(
