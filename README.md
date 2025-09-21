@@ -68,3 +68,40 @@ LISTEN_ASR_PROVIDER=sherpa_onnx LISTEN_SHERPA_TOKENS=... poetry run listen nano
 ```
 
 Use different `LISTEN_TMUX_SOCKET` values to confirm isolated servers when running multiple sessions.
+
+## Architecture & Session Cleanup
+
+**CRITICAL:** The tmux session cleanup mechanism is event-driven and relies on command wrapping. DO NOT change this without understanding the implications.
+
+### How Session Cleanup Works
+
+When you run `poetry run listen nano`, the orchestration system:
+
+1. **Creates an isolated tmux server** using a custom socket (`-L socket_name`)
+2. **Wraps the main app command** in a shell script that ensures cleanup:
+   ```sh
+   sh -c 'nano; tmux -L socket kill-session -t session'
+   ```
+3. **Starts the ASR daemon** in a hidden `.asr` window within the same session
+4. **Attaches to the session** and blocks until the session ends
+
+When nano (or any app) exits:
+- The shell wrapper immediately runs `tmux kill-session`
+- This kills the entire session including the ASR daemon window
+- The `attach_session()` call returns and triggers final cleanup
+- The custom tmux server is also terminated
+
+### Why This Design
+
+- **Event-driven:** No polling, immediate cleanup when main app exits
+- **Reliable:** Uses tmux's built-in command chaining, not unreliable hooks
+- **Isolated:** Custom tmux server prevents interference with user's tmux
+- **Compatible:** ASR daemon runs in tmux context for status bar and paste operations
+
+### Previous Failed Approaches
+
+- ❌ `pane-died` hooks: Unreliable for natural process exits
+- ❌ Subprocess ASR daemon: Breaks tmux integration (status bar, paste)
+- ❌ Polling monitors: Resource waste and unnecessary complexity
+
+**If cleanup stops working:** Check that the command wrapping in `orchestration.py` is intact. The main app must be wrapped with the kill-session command.

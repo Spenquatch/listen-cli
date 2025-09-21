@@ -94,7 +94,7 @@ def debug_log(message: str) -> None:
 
 def _default_sherpa_model_dir() -> Optional[Path]:
     root = Path(__file__).resolve().parent.parent
-    candidate = root / "sherpa" / "models" / "zipformer-en20m"
+    candidate = root / "models" / "zipformer-en20m"
     return candidate if candidate.is_dir() else None
 
 
