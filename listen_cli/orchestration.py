@@ -91,7 +91,13 @@ def launch(app: str, app_args: list[str], hotkey: Optional[str] = None) -> None:
     session_name = f"listen_{os.getpid()}"
     socket_name = os.getenv("LISTEN_TMUX_SOCKET") or session_name
     server = libtmux.Server(socket_name=socket_name)
-    session = server.new_session(session_name=session_name, attach=False, window_command=" ".join([shlex.quote(app), *map(shlex.quote, app_args)]))
+
+    # Wrap the main app command to kill the session when it exits
+    app_cmd = " ".join([shlex.quote(app), *map(shlex.quote, app_args)])
+    # Use sh -c to run the app and then kill the session when it exits
+    wrapped_cmd = f"sh -c '{app_cmd}; tmux -L {shlex.quote(socket_name)} kill-session -t {shlex.quote(session_name)}'"
+
+    session = server.new_session(session_name=session_name, attach=False, window_command=wrapped_cmd)
     window = session.attached_window
     pane = window.attached_pane
 

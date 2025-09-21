@@ -315,39 +315,8 @@ class ASRDaemon:
 
         loop.add_signal_handler(signal.SIGTERM, _sigterm)
 
-        # Monitor for main window - check every 3 seconds
-        async def monitor_main_window():
-            socket = os.getenv("TMUX_SOCKET")
-            tmux_cmd = ["tmux"]
-            if socket:
-                tmux_cmd.extend(["-L", socket])
-
-            while not stop_event.is_set():
-                await asyncio.sleep(3)
-                # Check if we have any non-hidden windows (main app window)
-                try:
-                    list_cmd = tmux_cmd + ["list-windows", "-t", self.session, "-F", "#{window_name}"]
-                    result = subprocess.run(list_cmd, capture_output=True, text=True, check=False)
-
-                    if result.returncode == 0:
-                        windows = result.stdout.strip().split('\n') if result.stdout.strip() else []
-                        # Filter out hidden windows (starting with .)
-                        visible_windows = [w for w in windows if not w.startswith('.')]
-                        if not visible_windows:
-                            debug_log("No visible windows found, triggering shutdown")
-                            stop_event.set()
-                            # Kill the session to ensure everything closes
-                            kill_cmd = tmux_cmd + ["kill-session", "-t", self.session]
-                            subprocess.run(kill_cmd, check=False)
-                            break
-                except Exception as e:
-                    debug_log(f"Monitor error: {e}")
-
-        monitor_task = asyncio.create_task(monitor_main_window())
-
         async with server:
             await stop_event.wait()
-            monitor_task.cancel()
             server.close()
             await server.wait_closed()
             if self.engine.is_listening():
