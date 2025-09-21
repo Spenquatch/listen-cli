@@ -86,6 +86,7 @@ class SherpaOnnxEngine(BaseEngine):
             # Wait for the loop to start; avoid hanging if something goes wrong.
             self._thread_ready.wait(timeout=2.0)
             self._reset_event.wait(timeout=2.0)
+            self._prime_stream_with_silence()
 
     # ------------------------------------------------------------------
     def _process_samples(self, samples: np.ndarray) -> None:
@@ -118,6 +119,17 @@ class SherpaOnnxEngine(BaseEngine):
 
         self._reset_event.set()
         return True
+
+    def _prime_stream_with_silence(self) -> None:
+        frames = max(0, self._initial_padding_frames)
+        if frames == 0:
+            return
+        silence = np.zeros(frames, dtype="float32")
+        with self._recognizer_lock:
+            self.stream.accept_waveform(self.mic_rate, silence)
+            # Process the padding immediately so internal states are ready.
+            while self.recognizer.is_ready(self.stream):
+                self.recognizer.decode_stream(self.stream)
 
     def _inject_padding_if_needed(self) -> None:
         with self._state_lock:
