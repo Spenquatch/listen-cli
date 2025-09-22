@@ -28,6 +28,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import threading
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional, Tuple
@@ -242,6 +243,8 @@ class ASRDaemon:
         debug_log(f"daemon init session={session} provider={self.provider}")
         tmux_set_var("@asr_preview", "")
         tmux_status_on(False)
+        self._ready_watch_started = False
+        self._maybe_watch_ready()
         if self._should_prewarm():
             prewarm = getattr(self.engine, "prewarm", None)
             if callable(prewarm):
@@ -264,6 +267,23 @@ class ASRDaemon:
         debug_log(f"engine error: {message}")
 
     # Internal helpers -------------------------------------------------------
+    def _maybe_watch_ready(self) -> None:
+        event = getattr(self.engine, "ready_event", None)
+        if isinstance(event, threading.Event) and not event.is_set():
+            tmux_set_var("@asr_message", "Loading…")
+
+            def _wait():
+                event.wait()
+                tmux_preview("")
+                tmux_set_var("@asr_message", "")
+
+            if not self._ready_watch_started:
+                watcher = threading.Thread(target=_wait, daemon=True)
+                watcher.start()
+                self._ready_watch_started = True
+        else:
+            tmux_set_var("@asr_message", "")
+
     def _should_prewarm(self) -> bool:
         mode = os.getenv("LISTEN_PREWARM", "auto").lower()
         if mode == "always":
@@ -298,6 +318,10 @@ class ASRDaemon:
 
     def toggle(self, pane_id: str) -> None:
         if not self.engine.is_listening() and not self._stopping:
+            if not self.engine.is_ready():
+                tmux_preview("Loading…")
+                self._maybe_watch_ready()
+                return
             self._start()
             return
         if self._stopping:

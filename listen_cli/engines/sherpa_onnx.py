@@ -89,14 +89,13 @@ class SherpaOnnxEngine(BaseEngine):
         self._punctuator = self._load_punctuator()
 
         if self.hot_mic:
+            self.set_ready(False)
             # Kick off the background loop immediately so the mic stays warm.
             self._request_reset = True
             self._thread = threading.Thread(target=self._continuous_loop, daemon=True)
             self._thread.start()
-            # Wait for the loop to start; avoid hanging if something goes wrong.
-            self._thread_ready.wait(timeout=2.0)
-            self._reset_event.wait(timeout=2.0)
-            self._prime_stream_with_silence()
+        else:
+            self.set_ready(True)
 
     # ------------------------------------------------------------------
     def _process_samples(self, samples: np.ndarray) -> None:
@@ -266,6 +265,8 @@ class SherpaOnnxEngine(BaseEngine):
         try:
             with MicrophoneSource(self.mic_rate, self.chunk_ms) as mic:
                 self._thread_ready.set()
+                self._prime_stream_with_silence()
+                self.set_ready(True)
                 while not self._shutdown_event.is_set():
                     if self._handle_pending_reset():
                         continue

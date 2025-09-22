@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable
+import threading
 import time
 
 
@@ -17,6 +18,8 @@ class BaseEngine:
         self.on_error = on_error
         self._last_hud_ts = 0.0
         self._hud_throttle = max(0, hud_throttle_ms) / 1000.0
+        self._ready_event = threading.Event()
+        self._ready_event.set()
 
     def start(self) -> None:
         raise NotImplementedError
@@ -39,3 +42,16 @@ class BaseEngine:
         if len(text) > 60:
             text = text[:60] + "…"
         self.on_partial(text)
+
+    def set_ready(self, ready: bool) -> None:
+        if ready:
+            self._ready_event.set()
+        else:
+            self._ready_event.clear()
+
+    def is_ready(self) -> bool:
+        return self._ready_event.is_set()
+
+    @property
+    def ready_event(self) -> threading.Event:
+        return self._ready_event

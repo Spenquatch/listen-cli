@@ -25,6 +25,7 @@ Hot model, cold mic (no first‑word cutoffs)
 - `BACKGROUND_ALWAYS_LISTEN=off` forces local engines back to push-to-talk; `on` forces continuous loops even for future local models.
 - `BACKGROUND_PREBUFFER_SECONDS` (default 0.4s) keeps a rolling buffer of idle audio so the first toggle includes opening syllables.
 - Optional punctuation/casing: download `sherpa-onnx-online-punct-en-2024-08-06` and set `LISTEN_PUNCT_MODEL_DIR`; autodiscovery looks in `listen_cli/models/punctuation/` as well as alongside `LISTEN_SHERPA_MODEL_DIR` (e.g., `zipformer-en20m/` or its `punctuation/` subdir).
+- HUD `@asr_message` shows `Loading…` until the engine’s ready event fires.
 
 Invariants you MUST keep
 - Paste uses tmux buffer + `paste-buffer -p` (bracketed paste). Never write to the app pty directly.
