@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -83,6 +84,9 @@ class SherpaOnnxEngine(BaseEngine):
         self._listening = False
         self._padding_frames = 0
         self._prebuffer_needs_flush = False
+        self._raw_text = ""
+
+        self._punctuator = self._load_punctuator()
 
         if self.hot_mic:
             # Kick off the background loop immediately so the mic stays warm.
@@ -100,14 +104,17 @@ class SherpaOnnxEngine(BaseEngine):
             self.stream.accept_waveform(self.mic_rate, samples)
             while self.recognizer.is_ready(self.stream):
                 self.recognizer.decode_stream(self.stream)
-            result = self.recognizer.get_result(self.stream)
+            raw = self.recognizer.get_result(self.stream)
+
+        formatted = self._format_text(raw, final=False)
 
         with self._state_lock:
-            self._latest_result = result
+            self._raw_text = raw
+            self._latest_result = formatted
             listening = self._listening
 
-        if result and listening:
-            self._emit_partial(result)
+        if formatted and listening:
+            self._emit_partial(formatted)
 
     def _handle_pending_reset(self) -> bool:
         with self._state_lock:
@@ -122,6 +129,7 @@ class SherpaOnnxEngine(BaseEngine):
             self._latest_result = ""
             self._padding_frames = 0
             self._last_hud_ts = 0.0
+            self._raw_text = ""
 
         self._reset_event.set()
         return True
@@ -136,6 +144,63 @@ class SherpaOnnxEngine(BaseEngine):
             # Process the padding immediately so internal states are ready.
             while self.recognizer.is_ready(self.stream):
                 self.recognizer.decode_stream(self.stream)
+
+    def _load_punctuator(self) -> Optional[sherpa_onnx.OnlinePunctuation]:
+        if os.getenv("LISTEN_DISABLE_PUNCT"):
+            return None
+
+        model_dir_env = os.getenv("LISTEN_PUNCT_MODEL_DIR")
+        candidates: list[Path] = []
+        if model_dir_env:
+            candidates.append(Path(model_dir_env))
+
+        sherpa_model_dir = os.getenv("LISTEN_SHERPA_MODEL_DIR")
+        if sherpa_model_dir:
+            sherpa_path = Path(sherpa_model_dir)
+            candidates.extend([sherpa_path, sherpa_path / "punctuation"])
+
+        default_root = Path(__file__).resolve().parent.parent / "models"
+        candidates.extend(
+            [
+                default_root / "punctuation",
+                default_root / "zipformer-en20m",
+                default_root / "zipformer-en20m" / "punctuation",
+            ]
+        )
+
+        model_path: Optional[Path] = None
+        vocab_path: Optional[Path] = None
+        for directory in candidates:
+            model_file = directory / "model.onnx"
+            vocab_file = directory / "bpe.vocab"
+            if model_file.is_file() and vocab_file.is_file():
+                model_path = model_file
+                vocab_path = vocab_file
+                break
+
+        if not model_path or not vocab_path:
+            return None
+
+        try:
+            provider = os.getenv("LISTEN_PUNCT_PROVIDER", "cpu")
+            threads = int(os.getenv("LISTEN_PUNCT_THREADS", "1"))
+            debug_env = os.getenv("LISTEN_PUNCT_DEBUG")
+            debug = False
+            if debug_env is not None:
+                debug = debug_env.strip().lower() in {"1", "true", "on", "yes"}
+            config = sherpa_onnx.OnlinePunctuationConfig(
+                model=sherpa_onnx.OnlinePunctuationModelConfig(
+                    cnn_bilstm=str(model_path),
+                    bpe_vocab=str(vocab_path),
+                    num_threads=threads,
+                    provider=provider,
+                    debug=debug,
+                )
+            )
+            return sherpa_onnx.OnlinePunctuation(config)
+        except Exception as exc:  # pragma: no cover
+            self.on_error(f"punctuator load failed: {exc}")
+            return None
 
     def _append_prebuffer(self, samples: np.ndarray) -> None:
         if self._prebuffer_max_frames == 0:
@@ -172,6 +237,7 @@ class SherpaOnnxEngine(BaseEngine):
             self._prebuffer.clear()
             self._prebuffer_frames = 0
             self._prebuffer_needs_flush = False
+            self._raw_text = ""
 
     def _inject_padding_if_needed(self) -> None:
         with self._state_lock:
@@ -183,6 +249,18 @@ class SherpaOnnxEngine(BaseEngine):
         silence = np.zeros(padding, dtype="float32")
         with self._recognizer_lock:
             self.stream.accept_waveform(self.mic_rate, silence)
+
+    def _format_text(self, text: str, *, final: bool) -> str:
+        cleaned = text.strip()
+        if not cleaned:
+            return ""
+        lower = cleaned.lower()
+        if final and self._punctuator:
+            try:
+                return self._punctuator.AddPunctuationWithCase(lower)
+            except Exception as exc:  # pragma: no cover
+                self.on_error(f"punctuation error: {exc}")
+        return lower.capitalize()
 
     def _continuous_loop(self) -> None:
         try:
@@ -223,6 +301,7 @@ class SherpaOnnxEngine(BaseEngine):
                 if self._listening:
                     return
                 self._latest_result = ""
+                self._raw_text = ""
                 self._listening = False
                 self._padding_frames = 0
                 self._reset_event.clear()
@@ -237,6 +316,8 @@ class SherpaOnnxEngine(BaseEngine):
                 self._last_hud_ts = 0.0
                 if self._prebuffer_max_frames:
                     self._prebuffer_needs_flush = True
+                    self._latest_result = ""
+                    self._raw_text = ""
             return
 
         with self._state_lock:
@@ -244,6 +325,7 @@ class SherpaOnnxEngine(BaseEngine):
                 return
             self._listening = True
             self._latest_result = ""
+            self._raw_text = ""
             self._padding_frames = self._initial_padding_frames
             self._last_hud_ts = 0.0
 
@@ -278,15 +360,22 @@ class SherpaOnnxEngine(BaseEngine):
             with self._recognizer_lock:
                 final_text = self.recognizer.get_result(self.stream)
             if final_text:
+                formatted = self._format_text(final_text, final=True)
+            else:
                 with self._state_lock:
-                    self._latest_result = final_text
-            return (final_text or self._latest_result).strip()
+                    raw = self._raw_text
+                formatted = self._format_text(raw, final=True)
+
+            with self._state_lock:
+                self._latest_result = formatted
+                self._raw_text = ""
+
+            return formatted.strip()
 
         with self._state_lock:
             if not self._listening:
                 return ""
             self._listening = False
-            self._reset_prebuffer()
 
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -296,11 +385,20 @@ class SherpaOnnxEngine(BaseEngine):
             final_text = self.recognizer.get_result(self.stream)
             self.recognizer.reset(self.stream)
 
-        with self._state_lock:
-            if final_text:
-                self._latest_result = final_text
+        if final_text:
+            formatted = self._format_text(final_text, final=True)
+        else:
+            with self._state_lock:
+                raw = self._raw_text
+            formatted = self._format_text(raw, final=True)
 
-        return (final_text or self._latest_result).strip()
+        with self._state_lock:
+            self._latest_result = formatted
+            self._raw_text = ""
+
+        self._reset_prebuffer()
+
+        return formatted.strip()
 
     def shutdown(self) -> None:
         if self.hot_mic:

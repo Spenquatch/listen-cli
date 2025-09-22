@@ -24,6 +24,7 @@ Hot model, cold mic (no first‑word cutoffs)
 - Remote providers (AssemblyAI, etc.) continue to start/stop mic capture on each toggle.
 - `BACKGROUND_ALWAYS_LISTEN=off` forces local engines back to push-to-talk; `on` forces continuous loops even for future local models.
 - `BACKGROUND_PREBUFFER_SECONDS` (default 0.4s) keeps a rolling buffer of idle audio so the first toggle includes opening syllables.
+- Optional punctuation/casing: download `sherpa-onnx-online-punct-en-2024-08-06` and set `LISTEN_PUNCT_MODEL_DIR`; autodiscovery looks in `listen_cli/models/punctuation/` as well as alongside `LISTEN_SHERPA_MODEL_DIR` (e.g., `zipformer-en20m/` or its `punctuation/` subdir).
 
 Invariants you MUST keep
 - Paste uses tmux buffer + `paste-buffer -p` (bracketed paste). Never write to the app pty directly.
@@ -398,9 +399,10 @@ Prewarm policy (single knob)
   - `always`: prewarm all providers (including remote); audio capture still depends on whether the provider runs continuously (local) or push-to-talk (remote).
   - `never`: prewarm none (construct/connect on first toggle only).
 
-Hot-mic overrides & prebuffer
+Hot-mic overrides, prebuffer, punctuation
 - `BACKGROUND_ALWAYS_LISTEN=on|off` (unset uses provider defaults). Use `off` to keep local engines push-to-talk; `on` to force continuous loops in any background-capable engine.
 - `BACKGROUND_PREBUFFER_SECONDS` adjusts how much idle audio is queued before each hot-mic toggle.
+- `LISTEN_PUNCT_MODEL_DIR` (plus optional `LISTEN_PUNCT_PROVIDER`/`LISTEN_PUNCT_THREADS`) enables OnlinePunctuation; set `LISTEN_DISABLE_PUNCT=1` to skip formatting.
 
 Default provider selection
 - If the four sherpa model files are available (`LISTEN_SHERPA_TOKENS/ENCODER/DECODER/JOINER` or a shipped model directory), default to `sherpa_onnx`.
@@ -562,6 +564,7 @@ HUD preview missing on left
 - First tokens missing after first toggle
 - Confirm prewarm policy: local engines prewarm at daemon start and keep the mic loop hot automatically (unless `BACKGROUND_ALWAYS_LISTEN=off`); tune `BACKGROUND_PREBUFFER_SECONDS` if the opening syllables are still clipped. Remote engines prewarm only if `LISTEN_PREWARM=always`.
 - For sherpa‑onnx, ensure `OnlineRecognizer.from_transducer()` is called during engine construction, not at first toggle.
+- If punctuation fails to load, double-check `LISTEN_PUNCT_MODEL_DIR` contains `model.onnx` and `bpe.vocab`, or set `LISTEN_DISABLE_PUNCT=1` to bypass formatting.
 
 -------------------------------------------------------------------------------
 

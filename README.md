@@ -36,6 +36,16 @@ If you keep the bundle in the repo at `sherpa/models/zipformer-en20m/`, the daem
 For local engines we keep the microphone loop warm by default so the first words are never clipped. The hotkey simply decides when HUD updates and pastes occur. Set `BACKGROUND_ALWAYS_LISTEN=off` if you need the legacy push-to-talk behavior.
 `BACKGROUND_PREBUFFER_SECONDS` (default `0.4`) controls how much pre-roll audio we keep while idle so the first utterance always includes its opening syllables.
 
+To de-capitalize and punctuate the sherpa transcripts, download the English punctuation bundle and point the daemon at it (falls back to `listen_cli/models/punctuation/` if present):
+
+```bash
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-online-punct-en-2024-08-06.tar.bz2
+tar xvf sherpa-onnx-online-punct-en-2024-08-06.tar.bz2
+export LISTEN_PUNCT_MODEL_DIR=$PWD/sherpa-onnx-online-punct-en-2024-08-06
+```
+
+Optional knobs: `LISTEN_PUNCT_PROVIDER` (`cpu` default), `LISTEN_PUNCT_THREADS` (default `1`), and `LISTEN_DISABLE_PUNCT=1` to turn formatting off. The loader will also look in the same directory as your sherpa models (e.g. `models/zipformer-en20m` and `models/zipformer-en20m/punctuation`).
+
 ### AssemblyAI realtime
 
 Set your API key and either let auto-detection fall back to it or force it explicitly:
@@ -55,7 +65,7 @@ Control when engines prewarm with `LISTEN_PREWARM` (`auto` default):
 - `always`: prewarm all providers (including remote)
 - `never`: lazy-load on the first toggle
 
-`BACKGROUND_ALWAYS_LISTEN` lets you force the microphone loop on (`on`/`true`) or revert to push-to-talk (`off`/`false`) regardless of provider defaults. Tune `BACKGROUND_PREBUFFER_SECONDS` if you want more or less pre-roll audio captured before each toggle.
+`BACKGROUND_ALWAYS_LISTEN` lets you force the microphone loop on (`on`/`true`) or revert to push-to-talk (`off`/`false`) regardless of provider defaults. Tune `BACKGROUND_PREBUFFER_SECONDS` if you want more or less pre-roll audio captured before each toggle. If you need punctuation support in other locations, point `LISTEN_PUNCT_MODEL_DIR` at the extracted model and (optionally) adjust `LISTEN_PUNCT_THREADS`/`LISTEN_PUNCT_PROVIDER`.
 
 ## Smoke tests
 
