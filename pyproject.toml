@@ -8,7 +8,13 @@ readme = "README.md"
 homepage = "https://github.com/spenquatch/listen-cli"
 repository = "https://github.com/spenquatch/listen-cli"
 keywords = ["tmux", "cli", "tui", "asr", "speech-to-text"]
-packages = [{ include = "listen_cli" }]
+packages = [
+    { include = "listen_cli" }
+]
+include = [
+    { path = "models/**/*.onnx", format = ["sdist", "wheel"] },
+    { path = "models/**/*.txt", format = ["sdist", "wheel"] }
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"

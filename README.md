@@ -1,4 +1,4 @@
-# listen-cli
+# listen
 
 listen-cli wraps any terminal program in an isolated tmux server and adds a global microphone toggle that pastes transcripts with bracketed paste safety. A hidden `.asr` window hosts the Python daemon and status HUD so the target TUI keeps focus.
 
@@ -101,6 +101,7 @@ When you run `poetry run listen nano`, the orchestration system:
 4. **Attaches to the session** and blocks until the session ends
 
 When nano (or any app) exits:
+
 - The shell wrapper immediately runs `tmux kill-session`
 - This kills the entire session including the ASR daemon window
 - The `attach_session()` call returns and triggers final cleanup

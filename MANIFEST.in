@@ -1,0 +1,4 @@
+include models/zipformer-en20m/*.onnx
+include models/zipformer-en20m/punctuation/*.onnx
+include models/zipformer-en20m/*.txt
+recursive-include models *.onnx *.txt
