@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ class SherpaOnnxEngine(BaseEngine):
         on_error,
         hud_throttle_ms: int = 75,
         hot_mic: bool = False,
+        deferred: bool = False,
     ):
         super().__init__(
             on_partial=on_partial,
@@ -31,38 +33,29 @@ class SherpaOnnxEngine(BaseEngine):
             on_error=on_error,
             hud_throttle_ms=hud_throttle_ms,
         )
-        encoder = os.getenv("LISTEN_SHERPA_ENCODER")
-        decoder = os.getenv("LISTEN_SHERPA_DECODER")
-        joiner = os.getenv("LISTEN_SHERPA_JOINER")
-        tokens = os.getenv("LISTEN_SHERPA_TOKENS")
-        if not all([encoder, decoder, joiner, tokens]):
+        # Store configuration for deferred loading
+        self._encoder = os.getenv("LISTEN_SHERPA_ENCODER")
+        self._decoder = os.getenv("LISTEN_SHERPA_DECODER")
+        self._joiner = os.getenv("LISTEN_SHERPA_JOINER")
+        self._tokens = os.getenv("LISTEN_SHERPA_TOKENS")
+        if not all([self._encoder, self._decoder, self._joiner, self._tokens]):
             raise RuntimeError("Missing LISTEN_SHERPA_* model paths for sherpa-onnx provider")
 
-        provider = os.getenv("LISTEN_SHERPA_PROVIDER", "cpu")
-        threads = int(os.getenv("LISTEN_SHERPA_THREADS", "1"))
-        decoding = os.getenv("LISTEN_SHERPA_DECODING", "greedy_search")
-        rule1 = float(os.getenv("LISTEN_SHERPA_RULE1", "2.4"))
-        rule2 = float(os.getenv("LISTEN_SHERPA_RULE2", "1.2"))
-        rule3 = float(os.getenv("LISTEN_SHERPA_RULE3", "300"))
+        self._provider = os.getenv("LISTEN_SHERPA_PROVIDER", "cpu")
+        self._threads = int(os.getenv("LISTEN_SHERPA_THREADS", "1"))
+        self._decoding = os.getenv("LISTEN_SHERPA_DECODING", "greedy_search")
+        self._rule1 = float(os.getenv("LISTEN_SHERPA_RULE1", "2.4"))
+        self._rule2 = float(os.getenv("LISTEN_SHERPA_RULE2", "1.2"))
+        self._rule3 = float(os.getenv("LISTEN_SHERPA_RULE3", "300"))
 
-        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-            tokens=tokens,
-            encoder=encoder,
-            decoder=decoder,
-            joiner=joiner,
-            provider=provider,
-            num_threads=threads,
-            sample_rate=16000,
-            feature_dim=80,
-            enable_endpoint_detection=False,  # Manual toggle controls paste
-            rule1_min_trailing_silence=rule1,
-            rule2_min_trailing_silence=rule2,
-            rule3_min_utterance_length=rule3,
-            decoding_method=decoding,
-        )
+        # Initialize as None for deferred loading
+        self.recognizer = None
+        self.stream = None
+        self._punctuator = None
+        self._deferred = deferred
+        self._initialized = False
 
         self.hot_mic = bool(hot_mic)
-        self.stream = self.recognizer.create_stream()
         self.mic_rate = int(os.getenv("LISTEN_SAMPLE_RATE", "48000"))
         self.chunk_ms = int(os.getenv("LISTEN_CHUNK_MS", "100"))
         self._initial_padding_frames = int(0.12 * self.mic_rate)
@@ -87,8 +80,6 @@ class SherpaOnnxEngine(BaseEngine):
         self._raw_text = ""
         self._prebuffer_ready = False  # Track if prebuffer has filled once
 
-        self._punctuator = self._load_punctuator()
-
         if self.hot_mic:
             # Hot mic mode - will be ready after prewarming
             self.set_ready(False)
@@ -97,8 +88,48 @@ class SherpaOnnxEngine(BaseEngine):
             self._thread = threading.Thread(target=self._continuous_loop, daemon=True)
             self._thread.start()
         else:
+            if not self._deferred:
+                # Load immediately for non-hot-mic, non-deferred mode
+                self._load_models()
             # Normal mode - ready immediately
             self.set_ready(True)
+
+    # ------------------------------------------------------------------
+    def _load_models(self) -> None:
+        """Load recognizer and punctuator models."""
+        if self._initialized:
+            return
+
+        # Load recognizer
+        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=self._tokens,
+            encoder=self._encoder,
+            decoder=self._decoder,
+            joiner=self._joiner,
+            provider=self._provider,
+            num_threads=self._threads,
+            sample_rate=16000,
+            feature_dim=80,
+            enable_endpoint_detection=False,
+            rule1_min_trailing_silence=self._rule1,
+            rule2_min_trailing_silence=self._rule2,
+            rule3_min_utterance_length=self._rule3,
+            decoding_method=self._decoding,
+        )
+        self.stream = self.recognizer.create_stream()
+
+        # Load punctuator
+        self._punctuator = self._load_punctuator()
+        self._initialized = True
+
+    def _update_status(self, message: str) -> None:
+        """Thread-safe status update."""
+        try:
+            import subprocess
+            cmd = ["tmux", "set-option", "-g", "@asr_message", message]
+            subprocess.run(cmd, check=False, capture_output=True)
+        except Exception:
+            pass  # Ignore tmux errors
 
     # ------------------------------------------------------------------
     def _process_samples(self, samples: np.ndarray) -> None:
@@ -219,11 +250,6 @@ class SherpaOnnxEngine(BaseEngine):
                 oldest = self._prebuffer.popleft()
                 self._prebuffer_frames -= len(oldest)
 
-            # Set ready when prebuffer first reaches capacity
-            if not self._prebuffer_ready and self._prebuffer_frames >= self._prebuffer_max_frames:
-                self._prebuffer_ready = True
-                self.set_ready(True)
-
     def _drain_prebuffer(self) -> None:
         if self._prebuffer_max_frames == 0:
             return
@@ -271,10 +297,40 @@ class SherpaOnnxEngine(BaseEngine):
 
     def _continuous_loop(self) -> None:
         try:
+            # Phase 1: Load models
+            self._update_status("Loading models...")
+            self._load_models()
+
+            # Phase 2: Initialize audio
+            self._update_status("Initializing audio...")
             with MicrophoneSource(self.mic_rate, self.chunk_ms) as mic:
                 self._thread_ready.set()
                 self._prime_stream_with_silence()
-                # Don't set ready here - wait for prebuffer to fill
+
+                # Phase 3: Fill prebuffer with real-time audio
+                self._update_status("Warming up...")
+
+                # Drain any buffered audio first
+                for _ in range(3):
+                    try:
+                        mic.read()  # Discard buffered samples
+                    except:
+                        pass
+
+                # Fill prebuffer with real-time audio over actual time period
+                start_time = time.time()
+                while time.time() - start_time < self._prebuffer_seconds:
+                    samples = mic.read()
+                    self._append_prebuffer(samples)
+                    if self._shutdown_event.is_set():
+                        break
+
+                # Phase 4: Ready
+                self._update_status("")  # Clear status
+                self.set_ready(True)
+                self._prebuffer_ready = True
+
+                # Normal loop continues
                 while not self._shutdown_event.is_set():
                     if self._handle_pending_reset():
                         continue
@@ -304,6 +360,10 @@ class SherpaOnnxEngine(BaseEngine):
             return self._listening
 
     def start(self) -> None:
+        # Ensure models are loaded for non-hot-mic mode
+        if not self._initialized:
+            self._load_models()
+
         if self.hot_mic:
             self._thread_ready.wait(timeout=2.0)
             with self._state_lock:

@@ -160,6 +160,7 @@ def make_engine(
     on_final: Callable[[str], None],
     on_error: Callable[[str], None],
     hud_throttle_ms: int,
+    deferred: bool = False,
 ) -> Tuple[BaseEngine, str]:
     from importlib import import_module
 
@@ -178,6 +179,7 @@ def make_engine(
                 "on_error": on_error,
                 "hud_throttle_ms": hud_throttle_ms,
                 "hot_mic": _use_hot_mic(provider_name),
+                "deferred": deferred,
             }
             engine = engine_cls(**kwargs)
             return engine, provider_name
@@ -230,19 +232,25 @@ class ASRDaemon:
         self.socket_path = socket_path or f"/tmp/listen-{session}.sock"
         self._stopping = False
         self._hud_throttle = HUD_THROTTLE_DEFAULT
+
+        # Show loading status IMMEDIATELY
+        tmux_set_var("@asr_message", "Loading...")
+        tmux_set_var("@asr_preview", "")
+        tmux_status_on(False)
+
         try:
             self.engine, self.provider = make_engine(
                 on_partial=self._on_partial,
                 on_final=self._on_final,
                 on_error=self._on_error,
                 hud_throttle_ms=self._hud_throttle,
+                deferred=True,  # Enable deferred initialization
             )
         except Exception as exc:
             debug_log(f"engine init failed: {exc}")
+            tmux_set_var("@asr_message", "")  # Clear on error
             raise
         debug_log(f"daemon init session={session} provider={self.provider}")
-        tmux_set_var("@asr_preview", "")
-        tmux_status_on(False)
         self._ready_watch_started = False
         self._maybe_watch_ready()
         if self._should_prewarm():
