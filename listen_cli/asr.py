@@ -233,8 +233,8 @@ class ASRDaemon:
         self._stopping = False
         self._hud_throttle = HUD_THROTTLE_DEFAULT
 
-        # Show loading status IMMEDIATELY
-        tmux_set_var("@asr_message", "Loading...")
+        # Show loading status IMMEDIATELY (replaces "idle 🎙")
+        tmux_set_var("@asr_message", "Loading... 🎙")
         tmux_set_var("@asr_preview", "")
         tmux_status_on(False)
 
@@ -279,16 +279,14 @@ class ASRDaemon:
         event = getattr(self.engine, "ready_event", None)
         if isinstance(event, threading.Event):
             if not event.is_set():
-                # Show loading message immediately
-                tmux_set_var("@asr_message", "Loading…")
-                tmux_preview("Loading…")
+                # Show loading message immediately (replaces "idle 🎙")
+                tmux_set_var("@asr_message", "Loading… 🎙")
                 debug_log("Setting loading status - engine not ready")
 
                 def _wait():
                     debug_log("Watcher thread waiting for ready event")
                     event.wait()
-                    tmux_preview("")
-                    tmux_set_var("@asr_message", "")
+                    tmux_set_var("@asr_message", "")  # Clear to show "idle 🎙"
                     debug_log("Engine ready, clearing loading status")
 
                 if not self._ready_watch_started:
@@ -299,7 +297,6 @@ class ASRDaemon:
             else:
                 # Already ready, clear any message
                 tmux_set_var("@asr_message", "")
-                tmux_preview("")
                 debug_log("Engine already ready, no loading status needed")
 
     def _should_prewarm(self) -> bool:
@@ -337,8 +334,7 @@ class ASRDaemon:
     def toggle(self, pane_id: str) -> None:
         if not self.engine.is_listening() and not self._stopping:
             if not self.engine.is_ready():
-                tmux_preview("Loading…")
-                self._maybe_watch_ready()
+                # Don't start while loading (status already shown in status-left)
                 return
             self._start()
             return

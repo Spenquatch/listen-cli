@@ -79,6 +79,7 @@ class SherpaOnnxEngine(BaseEngine):
         self._prebuffer_needs_flush = False
         self._raw_text = ""
         self._prebuffer_ready = False  # Track if prebuffer has filled once
+        self._first_start_after_init = False  # Track first toggle after initialization
 
         if self.hot_mic:
             # Hot mic mode - will be ready after prewarming
@@ -298,17 +299,17 @@ class SherpaOnnxEngine(BaseEngine):
     def _continuous_loop(self) -> None:
         try:
             # Phase 1: Load models
-            self._update_status("Loading models...")
+            self._update_status("Loading... 🎙")
             self._load_models()
 
             # Phase 2: Initialize audio
-            self._update_status("Initializing audio...")
+            self._update_status("Loading... 🎙")
             with MicrophoneSource(self.mic_rate, self.chunk_ms) as mic:
                 self._thread_ready.set()
                 self._prime_stream_with_silence()
 
                 # Phase 3: Fill prebuffer with real-time audio
-                self._update_status("Warming up...")
+                self._update_status("Loading... 🎙")
 
                 # Drain any buffered audio first
                 for _ in range(3):
@@ -329,6 +330,7 @@ class SherpaOnnxEngine(BaseEngine):
                 self._update_status("")  # Clear status
                 self.set_ready(True)
                 self._prebuffer_ready = True
+                self._first_start_after_init = True  # Mark that we're ready for first use
 
                 # Normal loop continues
                 while not self._shutdown_event.is_set():
@@ -384,7 +386,15 @@ class SherpaOnnxEngine(BaseEngine):
                 self._listening = True
                 self._last_hud_ts = 0.0
                 if self._prebuffer_max_frames:
-                    self._prebuffer_needs_flush = True
+                    # On first start after init, reset prebuffer instead of draining
+                    if self._first_start_after_init:
+                        self._prebuffer.clear()
+                        self._prebuffer_frames = 0
+                        self._prebuffer_needs_flush = False
+                        self._first_start_after_init = False
+                        # First start after init - reset prebuffer to avoid cutting off speech
+                    else:
+                        self._prebuffer_needs_flush = True
                     self._latest_result = ""
                     self._raw_text = ""
             return
