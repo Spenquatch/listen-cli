@@ -3,7 +3,12 @@ import os
 import threading
 from typing import Optional
 
-import assemblyai as aai
+try:
+    import assemblyai as aai
+    ASSEMBLYAI_AVAILABLE = True
+except ImportError:
+    ASSEMBLYAI_AVAILABLE = False
+    aai = None
 
 from .base import BaseEngine
 
@@ -18,6 +23,11 @@ class AssemblyAIEngine(BaseEngine):
             on_error=on_error,
             hud_throttle_ms=hud_throttle_ms,
         )
+
+        if not ASSEMBLYAI_AVAILABLE:
+            raise RuntimeError("AssemblyAI is not available. Audio dependencies may be missing.\n"
+                               "Run 'listen' from the command line to set up dependencies.")
+
         api_key = os.getenv("ASSEMBLYAI_API_KEY")
         if not api_key:
             raise RuntimeError("ASSEMBLYAI_API_KEY env var is required for AssemblyAI provider")

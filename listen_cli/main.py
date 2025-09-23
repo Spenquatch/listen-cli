@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import NoReturn
 
 from . import orchestration
+from .setup import setup_if_needed
 
 
 def _tmux_cmd(*args: str, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
@@ -100,6 +101,13 @@ def main(argv: list[str] | None = None) -> NoReturn:
     if not argv:
         print("usage: listen <app> [args...]\nexample: listen nano", file=sys.stderr)
         sys.exit(2)
+
+    # Run first-time setup if needed (before launching)
+    if not setup_if_needed():
+        print("\n⚠️  Setup incomplete. Some features may not work.", file=sys.stderr)
+        response = input("Continue anyway? [y/N]: ").strip().lower()
+        if response != 'y':
+            sys.exit(1)
 
     app = argv[0]
     app_args = argv[1:]

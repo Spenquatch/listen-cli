@@ -2,11 +2,46 @@
 
 listen-cli wraps any terminal program in an isolated tmux server and adds a global microphone toggle that pastes transcripts with bracketed paste safety. A hidden `.asr` window hosts the Python daemon and status HUD so the target TUI keeps focus.
 
+## Installation
+
+### From PyPI (recommended)
+
+```bash
+pip install listen-cli
+```
+
+On first run, `listen` will check for audio dependencies and guide you through setup if needed.
+
+### From source
+
+```bash
+git clone https://github.com/spenquatch/listen-cli.git
+cd listen-cli
+poetry install
+```
+
+### System Requirements
+
+The package will automatically detect and help install required audio dependencies on first run.
+
+If you prefer manual installation:
+
+**Linux/WSL**:
+```bash
+sudo apt-get install portaudio19-dev python3-pyaudio python3-dev
+```
+
+**macOS**:
+```bash
+brew install portaudio
+```
+
+**Windows**: Pre-compiled wheels usually work. If not, see [PyAudio wheels](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio)
+
 ## Quick Start
 
 ```bash
-poetry install
-poetry run listen nano  # wraps `nano` with the listen HUD and hotkey (default Alt-t)
+listen nano  # wraps `nano` with the listen HUD and hotkey (default Alt-t)
 ```
 
 Press the hotkey once to start recording (HUD flips to `REC 🎙`). Press again to paste the transcript into the active pane. All pastes flow through `tmux load-buffer` + `paste-buffer -p` to keep bracketed paste intact.
