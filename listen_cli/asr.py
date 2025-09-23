@@ -269,20 +269,30 @@ class ASRDaemon:
     # Internal helpers -------------------------------------------------------
     def _maybe_watch_ready(self) -> None:
         event = getattr(self.engine, "ready_event", None)
-        if isinstance(event, threading.Event) and not event.is_set():
-            tmux_set_var("@asr_message", "Loading…")
+        if isinstance(event, threading.Event):
+            if not event.is_set():
+                # Show loading message immediately
+                tmux_set_var("@asr_message", "Loading…")
+                tmux_preview("Loading…")
+                debug_log("Setting loading status - engine not ready")
 
-            def _wait():
-                event.wait()
-                tmux_preview("")
+                def _wait():
+                    debug_log("Watcher thread waiting for ready event")
+                    event.wait()
+                    tmux_preview("")
+                    tmux_set_var("@asr_message", "")
+                    debug_log("Engine ready, clearing loading status")
+
+                if not self._ready_watch_started:
+                    watcher = threading.Thread(target=_wait, daemon=True)
+                    watcher.start()
+                    self._ready_watch_started = True
+                    debug_log("Started ready watcher thread")
+            else:
+                # Already ready, clear any message
                 tmux_set_var("@asr_message", "")
-
-            if not self._ready_watch_started:
-                watcher = threading.Thread(target=_wait, daemon=True)
-                watcher.start()
-                self._ready_watch_started = True
-        else:
-            tmux_set_var("@asr_message", "")
+                tmux_preview("")
+                debug_log("Engine already ready, no loading status needed")
 
     def _should_prewarm(self) -> bool:
         mode = os.getenv("LISTEN_PREWARM", "auto").lower()

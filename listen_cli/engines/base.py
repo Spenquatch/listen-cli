@@ -19,7 +19,7 @@ class BaseEngine:
         self._last_hud_ts = 0.0
         self._hud_throttle = max(0, hud_throttle_ms) / 1000.0
         self._ready_event = threading.Event()
-        self._ready_event.set()
+        # Start as not ready - subclasses will set when appropriate
 
     def start(self) -> None:
         raise NotImplementedError

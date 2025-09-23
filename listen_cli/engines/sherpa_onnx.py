@@ -89,12 +89,14 @@ class SherpaOnnxEngine(BaseEngine):
         self._punctuator = self._load_punctuator()
 
         if self.hot_mic:
+            # Hot mic mode - will be ready after prewarming
             self.set_ready(False)
             # Kick off the background loop immediately so the mic stays warm.
             self._request_reset = True
             self._thread = threading.Thread(target=self._continuous_loop, daemon=True)
             self._thread.start()
         else:
+            # Normal mode - ready immediately
             self.set_ready(True)
 
     # ------------------------------------------------------------------

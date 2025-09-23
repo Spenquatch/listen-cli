@@ -32,6 +32,9 @@ class AssemblyAIEngine(BaseEngine):
         self._lock = threading.Lock()
         self._connected = False
 
+        # AssemblyAI is ready immediately (no prewarming needed)
+        self.set_ready(True)
+
     # ------------------------------------------------------------------
     def _handle_error(self, error: Exception) -> None:
         self.on_error(str(error))
