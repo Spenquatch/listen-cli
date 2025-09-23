@@ -85,6 +85,7 @@ class SherpaOnnxEngine(BaseEngine):
         self._padding_frames = 0
         self._prebuffer_needs_flush = False
         self._raw_text = ""
+        self._prebuffer_ready = False  # Track if prebuffer has filled once
 
         self._punctuator = self._load_punctuator()
 
@@ -218,6 +219,11 @@ class SherpaOnnxEngine(BaseEngine):
                 oldest = self._prebuffer.popleft()
                 self._prebuffer_frames -= len(oldest)
 
+            # Set ready when prebuffer first reaches capacity
+            if not self._prebuffer_ready and self._prebuffer_frames >= self._prebuffer_max_frames:
+                self._prebuffer_ready = True
+                self.set_ready(True)
+
     def _drain_prebuffer(self) -> None:
         if self._prebuffer_max_frames == 0:
             return
@@ -268,7 +274,7 @@ class SherpaOnnxEngine(BaseEngine):
             with MicrophoneSource(self.mic_rate, self.chunk_ms) as mic:
                 self._thread_ready.set()
                 self._prime_stream_with_silence()
-                self.set_ready(True)
+                # Don't set ready here - wait for prebuffer to fill
                 while not self._shutdown_event.is_set():
                     if self._handle_pending_reset():
                         continue
