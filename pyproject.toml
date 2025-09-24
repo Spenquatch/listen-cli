@@ -21,9 +21,13 @@ python = "^3.10"
 libtmux = ">=0.46"
 websockets = ">=12.0"
 sounddevice = ">=0.4.6"
-assemblyai = { extras = ["extras"], version = "^0.43.1" }
+assemblyai = "^0.43.1"
+pyaudio = { version = ">=0.2.13", optional = true }
 sherpa-onnx = "^1.12.14"
 numpy = ">=1.26,<2"
+
+[tool.poetry.extras]
+assemblyai-streaming = ["pyaudio"]
 
 [tool.poetry.scripts]
 listen = "listen_cli.main:main"

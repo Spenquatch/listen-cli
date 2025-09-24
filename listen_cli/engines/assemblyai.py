@@ -5,9 +5,15 @@ from typing import Optional
 
 try:
     import assemblyai as aai
+    try:
+        from assemblyai import extras
+        ASSEMBLYAI_EXTRAS_AVAILABLE = True
+    except ImportError:
+        ASSEMBLYAI_EXTRAS_AVAILABLE = False
     ASSEMBLYAI_AVAILABLE = True
 except ImportError:
     ASSEMBLYAI_AVAILABLE = False
+    ASSEMBLYAI_EXTRAS_AVAILABLE = False
     aai = None
 
 from .base import BaseEngine
@@ -25,8 +31,14 @@ class AssemblyAIEngine(BaseEngine):
         )
 
         if not ASSEMBLYAI_AVAILABLE:
-            raise RuntimeError("AssemblyAI is not available. Audio dependencies may be missing.\n"
-                               "Run 'listen' from the command line to set up dependencies.")
+            raise RuntimeError("AssemblyAI is not available. Please install the assemblyai package.")
+
+        if not ASSEMBLYAI_EXTRAS_AVAILABLE:
+            raise RuntimeError("AssemblyAI microphone streaming requires PyAudio.\n"
+                               "Install system dependencies first:\n"
+                               "  Linux/WSL: sudo apt-get install portaudio19-dev\n"
+                               "  macOS: brew install portaudio\n"
+                               "Then: pip install pyaudio")
 
         api_key = os.getenv("ASSEMBLYAI_API_KEY")
         if not api_key:

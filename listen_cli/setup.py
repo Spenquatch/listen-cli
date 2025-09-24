@@ -82,7 +82,8 @@ def install_portaudio() -> bool:
 def check_assemblyai_import() -> bool:
     """Check if AssemblyAI extras can be imported."""
     try:
-        import assemblyai.extras
+        import assemblyai
+        from assemblyai import extras
         return True
     except ImportError:
         return False
